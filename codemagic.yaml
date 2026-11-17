@@ -7,10 +7,9 @@ workflows:
     name: iOS Simulator Build (无需签名)
     max_build_duration: 30
     instance_type: mac_mini_m2
+    # 当前项目无需签名，因此不引入证书组；如需打包真机 IPA 可在此添加 environment.groups
     environment:
       xcode: latest
-      groups:
-        # 如有需要可在此引入证书组；当前项目无需签名，故留空
     scripts:
       - name: 构建模拟器 App（跳过签名）
         script: |
