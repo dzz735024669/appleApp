@@ -60,3 +60,13 @@ struct ContentView: View {
 ```
 
 点击按钮会通过 `@State` 更新 `message`，界面自动刷新。
+
+## CI/CD（Codemagic 自动构建）
+
+仓库已包含 `codemagic.yaml`，在 Codemagic 中选中 `appleApp` 应用后即可触发构建：
+
+1. 进入 Codemagic → Builds，选中 App 为 `appleApp`，点击 **Start new build**
+2. 选择分支 `main`，工作流选择 **iOS Simulator Build (无需签名)**
+3. 构建完成后，可在构建详情页下载 `HelloWorldiOS.app` 产物
+
+> 说明：当前项目未配置签名证书，因此使用**模拟器构建**（`CODE_SIGNING_ALLOWED=NO`）验证代码可编译。如需打包真机 IPA 上架，需在 Codemagic 中配置 Apple Developer 证书与描述文件后调整 `codemagic.yaml`。
