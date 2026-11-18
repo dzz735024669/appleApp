@@ -33,3 +33,61 @@ workflows:
     artifacts:
       - build/Workbench-simulator.app.zip
       - build/xcodebuild.log
+
+  ios-ipa-ad-hoc:
+    name: Workbench iPhone IPA (Ad Hoc signed)
+    max_build_duration: 30
+    instance_type: mac_mini_m2
+    environment:
+      xcode: latest
+      ios_signing:
+        distribution_type: ad_hoc
+        bundle_identifier: top.mcdkf.dzz.workbench
+    scripts:
+      - name: Test API models
+        script: |
+          set -euo pipefail
+          swift test
+      - name: Apply signing profiles
+        script: |
+          set -euo pipefail
+          xcode-project use-profiles
+      - name: Build signed iPhone IPA
+        script: |
+          set -euo pipefail
+          xcode-project build-ipa \
+            --project Workbench.xcodeproj \
+            --scheme Workbench \
+            --config Release
+      - name: Verify exported IPA
+        script: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import plistlib
+          import zipfile
+
+          packages = list(Path("build/ios/ipa").glob("*.ipa"))
+          if not packages:
+              raise SystemExit("No exported IPA found")
+          for package in packages:
+              with zipfile.ZipFile(package) as archive:
+                  names = archive.namelist()
+                  roots = [name[:-len("Info.plist")] for name in names
+                           if name.startswith("Payload/") and name.count("/") == 2
+                           and name.endswith(".app/Info.plist")]
+                  if len(roots) != 1:
+                      raise SystemExit("Expected one iPhone app in Payload")
+                  root = roots[0]
+                  info = plistlib.loads(archive.read(root + "Info.plist"))
+                  if info.get("CFBundleSupportedPlatforms") != ["iPhoneOS"]:
+                      raise SystemExit("Expected an iPhoneOS build")
+                  if root + "embedded.mobileprovision" not in names:
+                      raise SystemExit("Missing provisioning profile")
+                  if not any(name.startswith(root + "_CodeSignature/") for name in names):
+                      raise SystemExit("Missing app signature")
+              print("Exported signed iPhone package:", package)
+          PY
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
