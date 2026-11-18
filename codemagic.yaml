@@ -1,0 +1,35 @@
+workflows:
+  ios-simulator:
+    name: Workbench iOS Simulator
+    max_build_duration: 30
+    instance_type: mac_mini_m2
+    environment:
+      xcode: latest
+    scripts:
+      - name: Test API models
+        script: |
+          set -euo pipefail
+          swift test
+      - name: Build Workbench
+        script: |
+          set -euo pipefail
+          mkdir -p build
+          xcodebuild build \
+            -project Workbench.xcodeproj \
+            -scheme Workbench \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            2>&1 | tee build/xcodebuild.log
+      - name: Package simulator app
+        script: |
+          set -euo pipefail
+          ditto -c -k --sequesterRsrc --keepParent \
+            build/DerivedData/Build/Products/Debug-iphonesimulator/Workbench.app \
+            build/Workbench-simulator.app.zip
+    artifacts:
+      - build/Workbench-simulator.app.zip
+      - build/xcodebuild.log
