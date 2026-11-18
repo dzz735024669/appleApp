@@ -164,7 +164,7 @@ struct SignInView: View {
                         .foregroundStyle(.tint)
                         .padding(.vertical, 12)
                 }
-                Section("工作台账号") {
+                Section {
                     TextField("用户名", text: $username)
                         .textContentType(.username)
                         .textInputAutocapitalization(.never)
@@ -177,6 +177,8 @@ struct SignInView: View {
                         if session.loading { ProgressView() } else { Text("登录").fontWeight(.semibold) }
                     }
                     .disabled(session.loading || username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || password.isEmpty)
+                } header: {
+                    Text("工作台账号")
                 } footer: {
                     Text("通过 HTTPS 连接 dzz.mcdkf.top:7736。登录凭据保存在本机钥匙串。")
                 }
