@@ -1,19 +1,6 @@
-# Xcode
-build/
-*.xcodeproj/project.xcworkspace/
-*.xcodeproj/xcuserdata/
-*.xcworkspace/xcuserdata/
-DerivedData/
-
-# Swift
-*.swiftpm/
 .build/
-
-# macOS
-.DS_Store
-*.swp
-
-# User settings
+DerivedData/
 xcuserdata/
-*.xcscmblueprint
-*.xccheckout
+*.xcuserstate
+*.ipa
+.DS_Store
