@@ -91,3 +91,60 @@ workflows:
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
+
+  ios-ipa-free:
+    name: Workbench iPhone IPA (free sideload)
+    max_build_duration: 30
+    instance_type: mac_mini_m2
+    environment:
+      xcode: latest
+    scripts:
+      - name: Test API models
+        script: |
+          set -euo pipefail
+          swift test
+      - name: Build iPhone app for local signing
+        script: |
+          set -euo pipefail
+          mkdir -p build
+          xcodebuild build \
+            -project Workbench.xcodeproj \
+            -scheme Workbench \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/DeviceDerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            WORKBENCH_APNS_ENABLED=NO \
+            WORKBENCH_PUSH_ENTITLEMENTS= \
+            2>&1 | tee build/device-build.log
+      - name: Package IPA for AltStore signing
+        script: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import plistlib
+          import subprocess
+
+          app = Path("build/DeviceDerivedData/Build/Products/Release-iphoneos/Workbench.app")
+          if not app.is_dir():
+              raise SystemExit("Device app was not built")
+          with (app / "Info.plist").open("rb") as source:
+              info = plistlib.load(source)
+          if info.get("CFBundleSupportedPlatforms") != ["iPhoneOS"]:
+              raise SystemExit("Expected iPhoneOS app")
+          executable = app / info["CFBundleExecutable"]
+          architectures = subprocess.check_output(["lipo", "-archs", str(executable)], text=True).strip()
+          if architectures != "arm64":
+              raise SystemExit("Expected arm64 device executable: " + architectures)
+          print("Validated device application:", architectures)
+          PY
+          mkdir -p build/free-install/Payload
+          ditto build/DeviceDerivedData/Build/Products/Release-iphoneos/Workbench.app build/free-install/Payload/Workbench.app
+          cd build/free-install
+          ditto -c -k --keepParent Payload Workbench-unsigned.ipa
+          unzip -t Workbench-unsigned.ipa
+    artifacts:
+      - build/free-install/Workbench-unsigned.ipa
+      - build/device-build.log
