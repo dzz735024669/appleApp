@@ -3,6 +3,21 @@ import XCTest
 @testable import WorkbenchCore
 
 final class ContractTests: XCTestCase {
+    func testClipboardCandidatesAllowMissingEventTimeForPreview() throws {
+        let json = """
+        {"request_id":"5666bafd-464d-4cfa-b782-5484e093580e","reference_time":"2026-11-18T10:00:00+08:00",
+         "timezone":"Asia/Shanghai","model":"mimo-v2.6-flash","reason":"需要补充时间","candidates":[
+          {"candidate_id":"5666bafd-464d-4cfa-b782-5484e093580f","fields":{"kind":"event","title":"考试","target_at":null},
+           "evidence":"月底考试","missing_fields":["target_at"],"warnings":["请确认具体日期"],"status":"needs_details"}]}
+        """
+        let response = try WorkbenchAPI.decoder().decode(ClipboardParse.self, from: Data(json.utf8))
+        let candidate = try XCTUnwrap(response.candidates.first)
+        XCTAssertEqual(candidate.fields.kind, .event)
+        XCTAssertNil(candidate.fields.targetAt)
+        XCTAssertEqual(candidate.missingFields, ["target_at"])
+        XCTAssertEqual(candidate.status, "needs_details")
+    }
+
     func testBackendPayloadKeepsTheTaskAndDropsReadOnlyFields() throws {
         let json = """
         {"id":"5666bafd-464d-4cfa-b782-5484e093580e","revision":4,"kind":"task","title":"修复乱码",

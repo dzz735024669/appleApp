@@ -8,6 +8,8 @@ struct HomeView: View {
     @State private var data: HomeData?
     @State private var error: String?
     @State private var creation: ItemKind?
+    @State private var clipboardPresented = false
+    @StateObject private var clipboard = ClipboardImportModel()
 
     var body: some View {
         List {
@@ -18,6 +20,7 @@ struct HomeView: View {
                 }
                 .pickerStyle(.segmented)
                 Button { creation = .note } label: { Label("快速记录", systemImage: "square.and.pencil") }
+                Button { clipboardPresented = true } label: { Label("从剪贴板识别", systemImage: "doc.on.clipboard") }
             }
             if let error { InlineError(message: error) }
             if let data {
@@ -43,6 +46,9 @@ struct HomeView: View {
         .task(id: "\(category?.rawValue ?? "all"):\(session.refreshVersion)") { await load() }
         .onChange(of: category) { _, _ in data = nil }
         .refreshable { await load() }
+        .sheet(isPresented: $clipboardPresented) {
+            NavigationStack { ClipboardImportView(api: api, model: clipboard) }
+        }
         .sheet(isPresented: Binding(get: { creation != nil }, set: { if !$0 { creation = nil } })) {
             if let creation {
                 NavigationStack {

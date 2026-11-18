@@ -216,6 +216,36 @@ struct DutyPreview: Decodable {
     let remove: [String]
 }
 
+struct ClipboardParse: Decodable {
+    let requestID: UUID
+    let referenceTime: Date
+    let timezone: String
+    let model: String
+    let reason: String
+    let candidates: [ClipboardCandidate]
+
+    enum CodingKeys: String, CodingKey {
+        case requestID = "request_id"
+        case referenceTime = "reference_time"
+        case timezone, model, reason, candidates
+    }
+}
+
+struct ClipboardCandidate: Decodable, Identifiable {
+    let id: UUID
+    let fields: ItemFields
+    let evidence: String
+    let warnings: [String]
+    let missingFields: [String]
+    let status: String
+
+    enum CodingKeys: String, CodingKey {
+        case id = "candidate_id"
+        case fields, evidence, warnings, status
+        case missingFields = "missing_fields"
+    }
+}
+
 enum BeijingDates {
     static let timeZone = TimeZone(secondsFromGMT: 8 * 3600)!
     static var calendar: Calendar {

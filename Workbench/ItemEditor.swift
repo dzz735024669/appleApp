@@ -5,6 +5,7 @@ struct ItemEditor: View {
     let api: WorkbenchAPI
     let existing: Item?
     let onSave: (Item) -> Void
+    let onDraftSave: ((ItemFields) -> Void)?
     @Environment(\.dismiss) private var dismiss
     @State private var fields: ItemFields
     @State private var projects: [Item] = []
@@ -13,10 +14,12 @@ struct ItemEditor: View {
     @State private var requestID = UUID()
     @State private var customDutyReminder: Bool
 
-    init(api: WorkbenchAPI, draft: ItemFields, existing: Item? = nil, onSave: @escaping (Item) -> Void) {
+    init(api: WorkbenchAPI, draft: ItemFields, existing: Item? = nil,
+         onDraftSave: ((ItemFields) -> Void)? = nil, onSave: @escaping (Item) -> Void) {
         self.api = api
         self.existing = existing
         self.onSave = onSave
+        self.onDraftSave = onDraftSave
         _fields = State(initialValue: draft)
         let defaultTime = draft.date.flatMap(BeijingDates.parse).map(BeijingDates.previousEvening)
         _customDutyReminder = State(initialValue: draft.kind == .duty && draft.remindAt != nil && draft.remindAt != defaultTime)
@@ -44,7 +47,7 @@ struct ItemEditor: View {
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() }.disabled(saving) }
             ToolbarItem(placement: .confirmationAction) {
-                Button(saving ? "保存中…" : "保存") { Task { await save() } }
+                Button(saving ? "保存中…" : (onDraftSave == nil ? "保存" : "确认修改")) { Task { await save() } }
                     .disabled(saving || fields.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
@@ -99,7 +102,11 @@ struct ItemEditor: View {
             }
         case .event:
             Section("时间 · 北京时间") {
-                DatePicker("目标时间", selection: requiredDate($fields.targetAt))
+                if fields.targetAt == nil {
+                    Button("设置目标时间") { fields.targetAt = .now.addingTimeInterval(3600) }
+                } else {
+                    DatePicker("目标时间", selection: requiredDate($fields.targetAt))
+                }
                 optionalDate("提前提醒", $fields.remindAt)
                 choice("影响程度", $fields.impact)
             }
@@ -198,6 +205,15 @@ struct ItemEditor: View {
         }
         if payload.kind == .event, let reminder = payload.remindAt, let target = payload.targetAt, reminder >= target {
             error = "提前提醒需早于目标时间。"
+            return
+        }
+        if payload.kind == .event && payload.targetAt == nil {
+            error = "请设置倒计时的目标时间。"
+            return
+        }
+        if let onDraftSave {
+            onDraftSave(payload)
+            dismiss()
             return
         }
         do {
