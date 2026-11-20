@@ -2,6 +2,20 @@ import SwiftUI
 import UIKit
 import WidgetKit
 
+enum WorkbenchTheme {
+    static let blue = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(red: 0.38, green: 0.58, blue: 1, alpha: 1)
+            : UIColor(red: 0.14, green: 0.33, blue: 0.84, alpha: 1)
+    })
+    static let action = Color(red: 0.14, green: 0.33, blue: 0.84)
+    static let canvas = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? .systemBackground
+            : UIColor(red: 0.96, green: 0.97, blue: 0.985, alpha: 1)
+    })
+}
+
 @main
 @MainActor
 struct WorkbenchApp: App {
@@ -21,7 +35,7 @@ struct WorkbenchApp: App {
             .environmentObject(push)
             .environment(\.timeZone, BeijingDates.timeZone)
             .environment(\.calendar, BeijingDates.calendar)
-            .tint(Color(red: 0.10, green: 0.49, blue: 0.38))
+            .tint(WorkbenchTheme.blue)
             .task { await session.restore() }
         }
     }
@@ -33,7 +47,7 @@ struct ItemRoute: Identifiable, Hashable {
 
 @MainActor
 struct MainTabs: View {
-    private enum Tab: Hashable { case home, tasks, duty, library, settings }
+    private enum Tab: Hashable { case home, tasks, duty, library }
 
     let api: WorkbenchAPI
     @EnvironmentObject private var push: PushDelegate
@@ -44,9 +58,9 @@ struct MainTabs: View {
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            NavigationStack { HomeView(api: api) }
+            NavigationStack { HomeView(api: api) { selectedTab = .tasks } }
                 .tag(Tab.home)
-                .tabItem { Label("首页", systemImage: "house") }
+                .tabItem { Label("今天", systemImage: "house") }
             NavigationStack { ItemListView(api: api, mode: .tasks) }
                 .tag(Tab.tasks)
                 .tabItem { Label("待办", systemImage: "checklist") }
@@ -56,9 +70,6 @@ struct MainTabs: View {
             NavigationStack { ItemListView(api: api, mode: .library) }
                 .tag(Tab.library)
                 .tabItem { Label("资料", systemImage: "folder") }
-            NavigationStack { SettingsView() }
-                .tag(Tab.settings)
-                .tabItem { Label("我的", systemImage: "person.crop.circle") }
         }
         .task { await push.registerIfEnabled() }
         .task(id: "\(session.refreshVersion):\(push.localReminderEnabled)") {
@@ -130,7 +141,7 @@ struct MainTabs: View {
 }
 
 @MainActor
-private struct SettingsView: View {
+struct SettingsView: View {
     @EnvironmentObject private var session: SessionStore
     @EnvironmentObject private var push: PushDelegate
     @State private var signingOut = false
@@ -179,7 +190,7 @@ private struct SettingsView: View {
                     .disabled(session.loading)
             }
         }
-        .navigationTitle("我的")
+        .navigationTitle("设置")
         .confirmationDialog("退出当前工作台？", isPresented: $signingOut, titleVisibility: .visible) {
             Button("退出登录", role: .destructive) {
                 Task { await session.signOut() }

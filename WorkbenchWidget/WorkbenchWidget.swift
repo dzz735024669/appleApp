@@ -57,9 +57,14 @@ private enum WidgetLinks {
 
 struct WorkbenchWidgetEntryView: View {
     @Environment(\.widgetFamily) private var family
+    @Environment(\.colorScheme) private var colorScheme
     let entry: WorkbenchEntry
 
-    private let accent = Color(red: 0.10, green: 0.49, blue: 0.38)
+    private var accent: Color {
+        colorScheme == .dark
+            ? Color(red: 0.38, green: 0.58, blue: 1)
+            : Color(red: 0.14, green: 0.33, blue: 0.84)
+    }
 
     var body: some View {
         Group {
@@ -78,7 +83,13 @@ struct WorkbenchWidgetEntryView: View {
                 smallView
             }
         }
-        .containerBackground(.background, for: .widget)
+        .containerBackground(for: .widget) {
+            if family == .systemMedium && colorScheme == .light {
+                Color(red: 0.96, green: 0.97, blue: 0.985)
+            } else {
+                Rectangle().fill(.background)
+            }
+        }
     }
 
     // MARK: - Home Screen: Small
@@ -130,104 +141,132 @@ struct WorkbenchWidgetEntryView: View {
 
     // MARK: - Home Screen: Medium
 
+
     private var mediumView: some View {
         let duty = entry.snapshot.activeDuty(at: entry.date)
+        let tasks = Array(entry.snapshot.urgentTasks.prefix(2))
 
         return Group {
             if !entry.snapshot.signedIn {
-                notSignedInView
-                    .widgetURL(WidgetLinks.home)
+                notSignedInView.widgetURL(WidgetLinks.home)
             } else {
                 HStack(spacing: 12) {
-                    Link(destination: duty.map { WidgetLinks.item($0.summary.id) } ?? WidgetLinks.duty) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Label(duty?.daysRemaining == 0 ? "今日值班" : "个人值班",
-                                  systemImage: "calendar.badge.clock")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(duty?.daysRemaining == 0 ? Color.white : accent)
-                            Spacer(minLength: 0)
-                            if let duty {
-                                if duty.daysRemaining == 0 {
-                                    Text("今天")
-                                        .font(.title2.bold())
-                                        .foregroundStyle(.white)
-                                    Text("\(shortDate(duty.summary.date)) · 全天")
-                                        .font(.caption2)
-                                        .foregroundStyle(.white.opacity(0.9))
-                                } else {
-                                    Text("还有 \(duty.daysRemaining) 天")
-                                        .font(.title3.bold())
-                                        .foregroundStyle(.primary)
-                                    Text(shortDate(duty.summary.date))
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            } else {
-                                Text("暂无排班")
-                                    .font(.subheadline.weight(.medium))
-                                    .foregroundStyle(.secondary)
-                            }
+                    VStack(alignment: .leading, spacing: 7) {
+                        clock
+                        Divider()
+                        Link(destination: duty.map { WidgetLinks.item($0.summary.id) } ?? WidgetLinks.duty) {
+                            mediumDuty(duty)
                         }
-                        .padding(10)
-                        .frame(maxWidth: 118, maxHeight: .infinity, alignment: .leading)
-                        .background(
-                            duty?.daysRemaining == 0 ? accent : accent.opacity(0.10),
-                            in: RoundedRectangle(cornerRadius: 12)
-                        )
                     }
-
+                    .frame(width: 108, alignment: .leading)
+                    Divider()
                     VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text("重点待办")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            if entry.snapshot.overdueCount > 0 {
-                                Text("逾期 \(entry.snapshot.overdueCount)")
-                                    .font(.caption2.weight(.semibold))
-                                    .foregroundStyle(.red)
-                            } else if entry.snapshot.waitingCount > 0 {
-                                Text("等待 \(entry.snapshot.waitingCount)")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
+                        Link(destination: WidgetLinks.tasks) {
+                            Text("重点待办").font(.subheadline.bold()).foregroundStyle(.primary)
                         }
-
-                        if entry.snapshot.urgentTasks.isEmpty {
-                            Spacer(minLength: 0)
-                            Link(destination: WidgetLinks.tasks) {
-                                Label("当前无紧急或今日待办", systemImage: "checkmark.circle")
-                                    .font(.footnote)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer(minLength: 0)
+                        if tasks.isEmpty {
+                            Text("暂无重点待办")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         } else {
-                            ForEach(entry.snapshot.urgentTasks.prefix(3)) { task in
+                            ForEach(tasks) { task in
+                                if task.id != tasks.first?.id { Divider() }
                                 Link(destination: WidgetLinks.item(task.id)) {
-                                    HStack(spacing: 6) {
-                                        Circle()
-                                            .fill(task.isUrgent || task.isOverdue(at: entry.date) ? Color.red : accent)
-                                            .frame(width: 6, height: 6)
-                                        Text(task.title)
-                                            .font(.footnote.weight(.medium))
-                                            .foregroundStyle(.primary)
-                                            .lineLimit(1)
-                                        Spacer(minLength: 0)
-                                        if let due = task.dueAt {
-                                            Text(BeijingDates.format(due, pattern: "M/d HH:mm"))
-                                                .font(.caption2)
-                                                .foregroundStyle(task.isOverdue(at: entry.date) ? .red : .secondary)
-                                        }
-                                    }
+                                    mediumTask(task)
                                 }
                             }
-                            Spacer(minLength: 0)
                         }
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private var clock: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            if #available(iOS 18.0, *) {
+                let style = Date.FormatStyle(
+                    locale: Locale(identifier: "zh-Hans-CN-u-hc-h23"),
+                    calendar: BeijingDates.calendar,
+                    timeZone: BeijingDates.timeZone
+                )
+                HStack(spacing: 5) {
+                    Image(systemName: "clock")
+                        .font(.caption.bold())
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                    Text(.currentDate, format: style.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
+                        .font(.title2.bold().monospacedDigit())
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                Text(.currentDate, format: style.month(.twoDigits).day(.twoDigits).weekday(.abbreviated))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            } else {
+                Text(BeijingDates.format(entry.date, pattern: "M月d日"))
+                    .font(.title2.bold())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                Text(BeijingDates.format(entry.date, pattern: "EEEE"))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func mediumDuty(_ duty: (summary: WidgetSnapshot.DutySummary, daysRemaining: Int)?) -> some View {
+        let isToday = duty?.daysRemaining == 0
+        return VStack(alignment: .leading, spacing: 2) {
+            Label(duty == nil ? "暂无排班" : (isToday ? "今日值班" : "下次值班"), systemImage: "calendar")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(isToday ? accent : .primary)
+                .lineLimit(1)
+            if let duty {
+                let date = shortDate(duty.summary.date)
+                Text(isToday ? "\(date) · 全天" : "\(date) · 还有 \(duty.daysRemaining) 天")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func mediumTask(_ task: WidgetSnapshot.TaskSummary) -> some View {
+        let overdue = task.isOverdue(at: entry.date)
+        return HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "circle")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .padding(.top, 2)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(task.title)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                if overdue {
+                    Text("已逾期").font(.caption2).foregroundStyle(.red)
+                } else if let due = task.dueAt {
+                    let pattern = BeijingDates.calendar.isDate(due, inSameDayAs: entry.date) ? "HH:mm" : "M/d HH:mm"
+                    Text("\(BeijingDates.format(due, pattern: pattern)) 截止")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                } else {
+                    Text(task.isUrgent ? "紧急" : (task.isWaiting ? "等待中" : "待处理"))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Lock Screen: Circular / Rectangular / Inline

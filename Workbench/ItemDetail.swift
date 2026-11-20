@@ -14,14 +14,25 @@ struct ItemDetail: View {
     @State private var editor: EditorRoute?
     @State private var confirmDelete = false
 
+    private var isTask: Bool { current?.fields.kind == .task }
+
     var body: some View {
         List {
             if let error { InlineError(message: error) }
-            if let current { content(current) }
+            if let current {
+                if isTask { taskContent(current) }
+                else { content(current) }
+            }
             else if error == nil { ProgressView() }
         }
-        .navigationTitle(current?.fields.kind.label ?? "详情")
+        .listStyle(.plain)
+        .scrollContentBackground(isTask ? .hidden : .visible)
+        .background(isTask ? WorkbenchTheme.canvas : Color(uiColor: .systemBackground))
+        .navigationTitle(isTask ? "待办详情" : current?.fields.kind.label ?? "详情")
         .navigationBarTitleDisplayMode(.inline)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if let current, isTask { taskActionBar(current) }
+        }
         .toolbar {
             if let current {
                 ToolbarItem(placement: .primaryAction) {
@@ -48,6 +59,117 @@ struct ItemDetail: View {
         } message: {
             Text("关联附件也会被删除。")
         }
+    }
+
+    @ViewBuilder private func taskContent(_ item: Item) -> some View {
+        let fields = item.fields
+        VStack(alignment: .leading, spacing: 10) {
+            Text(fields.title)
+                .font(.largeTitle.bold())
+                .textSelection(.enabled)
+                .accessibilityAddTraits(.isHeader)
+            TimelineView(.periodic(from: .now, by: 60)) { context in
+                let overdue = fields.status != .completed && (fields.dueAt.map { $0 < context.date } ?? false)
+                let urgent = fields.status != .completed && fields.priority == .urgent
+                let status = [urgent ? "紧急" : nil, overdue ? "已逾期" : nil, fields.status?.label]
+                    .compactMap { $0 }.joined(separator: " · ")
+                Text(status)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(urgent || overdue ? Color.red : Color.secondary)
+            }
+            if let description = fields.description, !description.isEmpty {
+                Text(description).textSelection(.enabled)
+            }
+        }
+        .padding(.vertical, 16)
+        .listRowBackground(Color.clear)
+
+        Button {
+            editor = .init(fields: fields, existing: item)
+        } label: {
+            taskDetailRow("截止时间", icon: "calendar",
+                          value: fields.dueAt.map { BeijingDates.format($0) } ?? "未设置",
+                          actionable: true)
+        }
+        .buttonStyle(.plain)
+        .disabled(working)
+        .listRowBackground(Color.clear)
+
+        let reminder = fields.status == .waiting ? fields.followUpAt : fields.remindAt
+        let reminderTitle = fields.status == .waiting ? "跟进提醒" : "提醒"
+        Group {
+            if fields.status == .completed {
+                taskDetailRow(reminderTitle, icon: "bell",
+                              value: reminder.map { BeijingDates.format($0) } ?? "未设置")
+            } else {
+                Menu {
+                    snoozeActions(item)
+                    Button("编辑提醒", systemImage: "pencil") {
+                        editor = .init(fields: fields, existing: item)
+                    }
+                } label: {
+                    taskDetailRow(reminderTitle, icon: "bell",
+                                  value: reminder.map { BeijingDates.format($0) } ?? "稍后提醒",
+                                  actionable: true)
+                }
+                .disabled(working)
+                .accessibilityHint("选择稍后提醒或编辑时间")
+            }
+        }
+        .listRowBackground(Color.clear)
+
+        DisclosureGroup("更多信息") {
+            if let category = fields.category { LabeledContent("分类", value: category.label) }
+            if let priority = fields.priority { LabeledContent("优先级", value: priority.label) }
+            if let impact = fields.impact { LabeledContent("影响程度", value: impact.label) }
+            if fields.status == .waiting {
+                if let note = fields.waitingFor, !note.isEmpty { LabeledContent("等待", value: note) }
+                if let remind = fields.remindAt { LabeledContent("待办提醒", value: BeijingDates.format(remind)) }
+            }
+            relatedRows(item)
+            Button("添加关联文档", systemImage: "doc.badge.plus") { openLinkedDocument(from: item) }
+                .disabled(working)
+        }
+        .listRowBackground(Color.clear)
+        AttachmentSection(api: api, itemID: id)
+    }
+
+    private func taskDetailRow(_ title: String, icon: String, value: String, actionable: Bool = false) -> some View {
+        HStack(spacing: 12) {
+            Label(title, systemImage: icon).foregroundStyle(.primary)
+            Spacer()
+            Text(value).font(.subheadline).foregroundStyle(.secondary)
+            if actionable {
+                Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+            }
+        }
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
+    }
+
+    private func taskActionBar(_ item: Item) -> some View {
+        let isCompleted = item.fields.status == .completed
+        return Button {
+            Task { await changeTask(item, completed: !isCompleted) }
+        } label: {
+            Text(isCompleted ? "重新打开" : "标记完成")
+                .font(.headline)
+                .frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(WorkbenchTheme.action)
+        .disabled(working)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 8)
+        .background(.regularMaterial)
+    }
+
+    @ViewBuilder private func snoozeActions(_ item: Item) -> some View {
+        Button("15 分钟后") { Task { await changeTask(item, snoozeUntil: Date().addingTimeInterval(900)) } }
+        Button("1 小时后") { Task { await changeTask(item, snoozeUntil: Date().addingTimeInterval(3600)) } }
+        Button("3 小时后") { Task { await changeTask(item, snoozeUntil: Date().addingTimeInterval(3 * 3600)) } }
+        Button("明天上午 9:00") { Task { await changeTask(item, snoozeUntil: BeijingDates.nextMorning()) } }
     }
 
     @ViewBuilder private func content(_ item: Item) -> some View {
@@ -93,7 +215,7 @@ struct ItemDetail: View {
                 }
             }
         }
-        if fields.kind == .task || fields.kind == .note || fields.kind == .duty || fields.kind == .project || fields.kind == .paper || fields.kind == .award {
+        if fields.kind == .note || fields.kind == .duty || fields.kind == .project || fields.kind == .paper || fields.kind == .award {
             Section {
                 actions(for: item)
             }
@@ -101,18 +223,7 @@ struct ItemDetail: View {
         }
         if fields.projectID != nil || fields.sourceID != nil || fields.kind == .project || fields.kind == .note || fields.kind == .duty || !related.isEmpty {
             Section("关联内容") {
-                if let project = fields.projectID {
-                    NavigationLink("查看关联项目") { ItemDetail(api: api, id: project) }
-                }
-                if let source = fields.sourceID {
-                    NavigationLink("查看来源") { ItemDetail(api: api, id: source) }
-                }
-                ForEach(related) { child in
-                    NavigationLink { ItemDetail(api: api, id: child.id) } label: { ItemRow(item: child) }
-                }
-                if relatedHasMore {
-                    Button("加载更多") { Task { await loadRelated(for: item, append: true) } }.disabled(working)
-                }
+                relatedRows(item)
                 if fields.projectID == nil && fields.sourceID == nil && related.isEmpty {
                     Text("暂无关联内容").foregroundStyle(.secondary)
                 }
@@ -121,21 +232,23 @@ struct ItemDetail: View {
         AttachmentSection(api: api, itemID: id)
     }
 
+    @ViewBuilder private func relatedRows(_ item: Item) -> some View {
+        if let project = item.fields.projectID {
+            NavigationLink("查看关联项目") { ItemDetail(api: api, id: project) }
+        }
+        if let source = item.fields.sourceID {
+            NavigationLink("查看来源") { ItemDetail(api: api, id: source) }
+        }
+        ForEach(related) { child in
+            NavigationLink { ItemDetail(api: api, id: child.id) } label: { ItemRow(item: child) }
+        }
+        if relatedHasMore {
+            Button("加载更多") { Task { await loadRelated(for: item, append: true) } }.disabled(working)
+        }
+    }
+
     @ViewBuilder private func actions(for item: Item) -> some View {
-        if item.fields.kind == .task {
-            if item.fields.status != .completed {
-                Button("标记完成", systemImage: "checkmark.circle") { Task { await changeTask(item, completed: true) } }
-                Menu("稍后提醒", systemImage: "bell.badge") {
-                    Button("15 分钟后") { Task { await changeTask(item, snoozeUntil: Date().addingTimeInterval(900)) } }
-                    Button("1 小时后") { Task { await changeTask(item, snoozeUntil: Date().addingTimeInterval(3600)) } }
-                    Button("3 小时后") { Task { await changeTask(item, snoozeUntil: Date().addingTimeInterval(3 * 3600)) } }
-                    Button("明天上午 9:00") { Task { await changeTask(item, snoozeUntil: BeijingDates.nextMorning()) } }
-                }
-            } else {
-                Button("重新打开", systemImage: "arrow.uturn.backward") { Task { await changeTask(item) } }
-            }
-            Button("添加关联文档", systemImage: "doc.badge.plus") { openLinkedDocument(from: item) }
-        } else if item.fields.kind == .project {
+        if item.fields.kind == .project {
             Menu("添加关联内容", systemImage: "plus.circle") {
                 ForEach([ItemKind.task, .note, .event, .document, .paper, .award], id: \.self) { kind in
                     Button("新建\(kind.label)", systemImage: kind.icon) {

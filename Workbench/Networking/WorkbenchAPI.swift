@@ -47,8 +47,8 @@ private final class NoRedirects: NSObject, URLSessionTaskDelegate, @unchecked Se
 }
 
 struct WorkbenchAPI {
-    static let endpoint = URL(string: "https://dzz.mcdkf.top:7736/api/v1")!
-    static let serverHostDisplay = "dzz.mcdkf.top:7736"
+    static let serverHostDisplay = "mynasdzz.mcdkf.top:7736"
+    static let endpoint = URL(string: "https://\(serverHostDisplay)/api/v1")!
     static let attachmentLimit = 20 * 1024 * 1024
 
     private static let isoLock = NSLock()

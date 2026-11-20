@@ -1,6 +1,6 @@
 # 个人工作台 iPhone App
 
-独立 SwiftUI 应用，最低支持 iOS 17。使用已部署的 `https://dzz.mcdkf.top:7736/api/v1`。登录时输入自己的工作台账号和密码。凭据由设备钥匙串保存，每个请求通过 HTTPS 携带认证信息。
+独立 SwiftUI 应用，最低支持 iOS 17。App 配置的接口地址为 `https://mynasdzz.mcdkf.top:7736/api/v1`。登录时输入自己的工作台账号和密码。凭据由设备钥匙串保存，每个请求通过 HTTPS 携带认证信息。
 
 ## 在 Mac 上运行
 

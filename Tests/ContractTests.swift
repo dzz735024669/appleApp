@@ -54,7 +54,7 @@ final class ContractTests: XCTestCase {
         let api = WorkbenchAPI(credentials: Credentials(username: "owner", password: "test-password"))
         let request = try api.request(["items"], query: [.init(name: "q", value: "论文+奖项")])
         XCTAssertEqual(request.url?.scheme, "https")
-        XCTAssertEqual(request.url?.host, "dzz.mcdkf.top")
+        XCTAssertEqual(request.url?.host, "mynasdzz.mcdkf.top")
         XCTAssertEqual(request.url?.port, 7736)
         XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"),
                        "Basic " + Data("owner:test-password".utf8).base64EncodedString())
