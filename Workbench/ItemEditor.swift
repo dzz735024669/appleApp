@@ -4,6 +4,7 @@ import SwiftUI
 struct ItemEditor: View {
     let api: WorkbenchAPI
     let existing: Item?
+    let suggestedDates: [String: Date]
     let onSave: (Item) -> Void
     let onDraftSave: ((ItemFields) -> Void)?
     @Environment(\.dismiss) private var dismiss
@@ -15,9 +16,11 @@ struct ItemEditor: View {
     @State private var customDutyReminder: Bool
 
     init(api: WorkbenchAPI, draft: ItemFields, existing: Item? = nil,
+         suggestedDates: [String: Date] = [:],
          onDraftSave: ((ItemFields) -> Void)? = nil, onSave: @escaping (Item) -> Void) {
         self.api = api
         self.existing = existing
+        self.suggestedDates = suggestedDates
         self.onSave = onSave
         self.onDraftSave = onDraftSave
         _fields = State(initialValue: draft)
@@ -93,21 +96,21 @@ struct ItemEditor: View {
                 choice("影响程度", $fields.impact)
             }
             Section("时间 · 北京时间") {
-                optionalDate("截止时间", $fields.dueAt)
-                optionalDate("iPhone 提醒", $fields.remindAt)
+                optionalDate("截止时间", $fields.dueAt, default: suggestedDates["due_at"])
+                optionalDate("iPhone 提醒", $fields.remindAt, default: suggestedDates["remind_at"])
                 if fields.status == .waiting {
                     TextField("在等什么", text: string($fields.waitingFor))
-                    optionalDate("跟进提醒", $fields.followUpAt)
+                    optionalDate("跟进提醒", $fields.followUpAt, default: suggestedDates["follow_up_at"])
                 }
             }
         case .event:
             Section("时间 · 北京时间") {
                 if fields.targetAt == nil {
-                    Button("设置目标时间") { fields.targetAt = .now.addingTimeInterval(3600) }
+                    Button("设置目标时间") { fields.targetAt = suggestedDates["target_at"] ?? .now.addingTimeInterval(3600) }
                 } else {
                     DatePicker("目标时间", selection: requiredDate($fields.targetAt))
                 }
-                optionalDate("提前提醒", $fields.remindAt)
+                optionalDate("提前提醒", $fields.remindAt, default: suggestedDates["remind_at"])
                 choice("影响程度", $fields.impact)
             }
         case .duty:
@@ -163,9 +166,10 @@ struct ItemEditor: View {
         Binding(get: { value.wrappedValue ?? fallback }, set: { value.wrappedValue = $0 })
     }
 
-    @ViewBuilder private func optionalDate(_ title: String, _ value: Binding<Date?>) -> some View {
-        Toggle(title, isOn: Binding(get: { value.wrappedValue != nil }, set: { value.wrappedValue = $0 ? Date().addingTimeInterval(3600) : nil }))
-        if value.wrappedValue != nil { DatePicker(title, selection: requiredDate(value)) }
+    @ViewBuilder private func optionalDate(_ title: String, _ value: Binding<Date?>, default suggested: Date? = nil) -> some View {
+        Toggle(title, isOn: Binding(get: { value.wrappedValue != nil },
+                                    set: { value.wrappedValue = $0 ? (suggested ?? Date().addingTimeInterval(3600)) : nil }))
+        if value.wrappedValue != nil { DatePicker(title, selection: requiredDate(value, default: suggested ?? .now)) }
     }
 
     private func choice<T: NamedChoice>(_ title: String, _ selected: Binding<T?>,

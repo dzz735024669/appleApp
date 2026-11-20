@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import WidgetKit
 
 @main
 @MainActor
@@ -32,26 +33,40 @@ struct ItemRoute: Identifiable, Hashable {
 
 @MainActor
 struct MainTabs: View {
+    private enum Tab: Hashable { case home, tasks, duty, library, settings }
+
     let api: WorkbenchAPI
     @EnvironmentObject private var push: PushDelegate
     @EnvironmentObject private var session: SessionStore
     @Environment(\.scenePhase) private var scenePhase
+    @State private var selectedTab: Tab = .home
     @State private var incoming: ItemRoute?
 
     var body: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             NavigationStack { HomeView(api: api) }
+                .tag(Tab.home)
                 .tabItem { Label("首页", systemImage: "house") }
             NavigationStack { ItemListView(api: api, mode: .tasks) }
+                .tag(Tab.tasks)
                 .tabItem { Label("待办", systemImage: "checklist") }
             NavigationStack { DutyCalendarView(api: api) }
+                .tag(Tab.duty)
                 .tabItem { Label("值班", systemImage: "calendar") }
             NavigationStack { ItemListView(api: api, mode: .library) }
+                .tag(Tab.library)
                 .tabItem { Label("资料", systemImage: "folder") }
             NavigationStack { SettingsView() }
+                .tag(Tab.settings)
                 .tabItem { Label("我的", systemImage: "person.crop.circle") }
         }
         .task { await push.registerIfEnabled() }
+        .task(id: "\(session.refreshVersion):\(push.localReminderEnabled)") {
+            await push.syncLocalReminders(api: api)
+        }
+        .task(id: session.refreshVersion) {
+            await syncWidgetSnapshot()
+        }
         .task(id: push.token) {
             if let token = push.token {
                 await session.syncPush(token, environment: push.environment)
@@ -69,6 +84,9 @@ struct MainTabs: View {
                 push.pendingItemID = nil
             }
         }
+        .onOpenURL { url in
+            handleDeepLink(url)
+        }
         .sheet(item: $incoming) { route in
             NavigationStack {
                 ItemDetail(api: api, id: route.id)
@@ -78,6 +96,35 @@ struct MainTabs: View {
                         }
                     }
             }
+        }
+    }
+
+    private func syncWidgetSnapshot() async {
+        do {
+            let home = try await api.home(category: nil)
+            guard !Task.isCancelled else { return }
+            WidgetSnapshotStore.save(.from(home: home))
+            WidgetCenter.shared.reloadAllTimelines()
+        } catch {
+            // Keep last valid widget snapshot on transient network failures.
+        }
+    }
+
+    private func handleDeepLink(_ url: URL) {
+        guard url.scheme == "workbench" else { return }
+        switch url.host {
+        case "home":
+            selectedTab = .home
+        case "tasks":
+            selectedTab = .tasks
+        case "duty":
+            selectedTab = .duty
+        case "item":
+            if let raw = url.pathComponents.dropFirst().first, let id = UUID(uuidString: raw) {
+                incoming = ItemRoute(id: id)
+            }
+        default:
+            break
         }
     }
 }
@@ -92,7 +139,7 @@ private struct SettingsView: View {
         Form {
             Section("连接") {
                 LabeledContent("账号", value: session.username)
-                LabeledContent("服务器", value: "dzz.mcdkf.top:7736")
+                LabeledContent("服务器", value: WorkbenchAPI.serverHostDisplay)
                 LabeledContent("日历时区", value: "北京时间")
             }
             Section("提醒") {
@@ -111,8 +158,19 @@ private struct SettingsView: View {
                         }
                     }
                 } else {
-                    Label("此构建未启用 Apple 推送", systemImage: "bell.slash")
+                    Label("此构建未启用 Apple 远程推送", systemImage: "bell.badge")
                         .foregroundStyle(.secondary)
+                    Text(push.localStatus)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    if let api = session.api {
+                        Button(push.localReminderEnabled ? "立即同步本机提醒" : "开启本机提醒") {
+                            Task { await push.enableLocalReminders(api: api) }
+                        }
+                        if push.localReminderEnabled {
+                            Button("关闭本机提醒") { push.disableLocalReminders() }
+                        }
+                    }
                 }
             }
             Section {
@@ -142,14 +200,22 @@ struct InlineError: View {
 struct ItemRow: View {
     let item: Item
 
+    private var isOverdue: Bool {
+        item.fields.kind == .task && item.fields.status != .completed
+            && (item.fields.dueAt.map { $0 < Date() } ?? false)
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: item.fields.kind.icon)
-                .foregroundStyle(.tint)
+                .foregroundStyle(item.fields.status == .completed ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
                 .frame(width: 23)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 4) {
-                Text(item.fields.title).font(.body.weight(.medium))
+                Text(item.fields.title)
+                    .font(.body.weight(.medium))
+                    .strikethrough(item.fields.status == .completed)
+                    .foregroundStyle(item.fields.status == .completed ? .secondary : .primary)
                 if let target = item.fields.targetAt {
                     TimelineView(.periodic(from: .now, by: 60)) { context in
                         Text(BeijingDates.remaining(until: target, from: context.date))
@@ -161,13 +227,27 @@ struct ItemRow: View {
                         .compactMap { $0 }
                     if !labels.isEmpty {
                         Text(labels.joined(separator: " · "))
-                            .font(.footnote).foregroundStyle(.secondary)
+                            .font(.footnote)
+                            .foregroundStyle(isOverdue ? Color.red : Color.secondary)
+                    }
+                    if item.fields.status == .waiting, let waiting = item.fields.waitingFor, !waiting.isEmpty {
+                        Text("等：\(waiting)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
                 }
             }
             Spacer(minLength: 0)
-            if item.fields.priority == .urgent && item.fields.status != .completed {
-                Text("紧急").foregroundStyle(.red).font(.caption.weight(.semibold))
+            VStack(alignment: .trailing, spacing: 2) {
+                if item.fields.priority == .urgent && item.fields.status != .completed {
+                    Text("紧急").foregroundStyle(.red).font(.caption.weight(.semibold))
+                }
+                if isOverdue {
+                    Text("已逾期").foregroundStyle(.red).font(.caption2.weight(.semibold))
+                } else if item.fields.impact == .severe && item.fields.status != .completed {
+                    Text("严重").foregroundStyle(.orange).font(.caption2.weight(.semibold))
+                }
             }
         }
         .padding(.vertical, 3)

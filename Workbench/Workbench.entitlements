@@ -3,5 +3,9 @@
 <plist version="1.0">
 <dict>
     <key>aps-environment</key><string>$(WORKBENCH_APNS_ENVIRONMENT)</string>
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <string>group.top.mcdkf.dzz.workbench</string>
+    </array>
 </dict>
 </plist>

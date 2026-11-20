@@ -231,10 +231,18 @@ struct ClipboardParse: Decodable {
     }
 }
 
+struct ClipboardTimeHint: Decodable, Hashable {
+    let field: String
+    let precision: String
+    let evidence: String
+    let date: String?
+}
+
 struct ClipboardCandidate: Decodable, Identifiable {
     let id: UUID
     let fields: ItemFields
     let evidence: String
+    let timeHints: [ClipboardTimeHint]
     let warnings: [String]
     let missingFields: [String]
     let status: String
@@ -242,7 +250,31 @@ struct ClipboardCandidate: Decodable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case id = "candidate_id"
         case fields, evidence, warnings, status
+        case timeHints = "time_hints"
         case missingFields = "missing_fields"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        fields = try container.decode(ItemFields.self, forKey: .fields)
+        evidence = try container.decode(String.self, forKey: .evidence)
+        timeHints = try container.decodeIfPresent([ClipboardTimeHint].self, forKey: .timeHints) ?? []
+        warnings = try container.decodeIfPresent([String].self, forKey: .warnings) ?? []
+        missingFields = try container.decodeIfPresent([String].self, forKey: .missingFields) ?? []
+        status = try container.decode(String.self, forKey: .status)
+    }
+
+    var suggestedDates: [String: Date] {
+        var result: [String: Date] = [:]
+        for hint in timeHints {
+            guard let day = hint.date else { continue }
+            let hour = hint.field == "due_at" ? 18 : 9
+            if let date = BeijingDates.defaultTime(on: day, hour: hour, minute: 0) {
+                result[hint.field] = date
+            }
+        }
+        return result
     }
 }
 
@@ -276,12 +308,35 @@ enum BeijingDates {
         calendar.startOfDay(for: day).addingTimeInterval(-4 * 3600)
     }
 
+    static func defaultTime(on dayKey: String, hour: Int = 9, minute: Int = 0) -> Date? {
+        guard let day = parse(dayKey) else { return nil }
+        return calendar.date(bySettingHour: hour, minute: minute, second: 0, of: day)
+    }
+
+    private static let formatterLock = NSLock()
+    private static var formatters: [String: DateFormatter] = [:]
+
+    static func nextMorning(from now: Date = Date(), hour: Int = 9) -> Date {
+        let start = calendar.startOfDay(for: now)
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: start) ?? start.addingTimeInterval(86400)
+        return calendar.date(bySettingHour: hour, minute: 0, second: 0, of: tomorrow) ?? tomorrow
+    }
+
     static func format(_ date: Date, pattern: String = "M月d日 HH:mm") -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.calendar = calendar
-        formatter.timeZone = timeZone
-        formatter.dateFormat = pattern
+        formatterLock.lock()
+        defer { formatterLock.unlock() }
+        let formatter: DateFormatter
+        if let cached = formatters[pattern] {
+            formatter = cached
+        } else {
+            let created = DateFormatter()
+            created.locale = Locale(identifier: "zh_CN")
+            created.calendar = calendar
+            created.timeZone = timeZone
+            created.dateFormat = pattern
+            formatters[pattern] = created
+            formatter = created
+        }
         return formatter.string(from: date)
     }
 

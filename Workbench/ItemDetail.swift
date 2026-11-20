@@ -93,13 +93,13 @@ struct ItemDetail: View {
                 }
             }
         }
-        if fields.kind == .task || fields.kind == .note || fields.kind == .duty {
+        if fields.kind == .task || fields.kind == .note || fields.kind == .duty || fields.kind == .project || fields.kind == .paper || fields.kind == .award {
             Section {
                 actions(for: item)
             }
             .disabled(working)
         }
-        if fields.projectID != nil || fields.sourceID != nil || fields.kind == .project || fields.kind == .note || fields.kind == .duty {
+        if fields.projectID != nil || fields.sourceID != nil || fields.kind == .project || fields.kind == .note || fields.kind == .duty || !related.isEmpty {
             Section("关联内容") {
                 if let project = fields.projectID {
                     NavigationLink("查看关联项目") { ItemDetail(api: api, id: project) }
@@ -126,12 +126,27 @@ struct ItemDetail: View {
             if item.fields.status != .completed {
                 Button("标记完成", systemImage: "checkmark.circle") { Task { await changeTask(item, completed: true) } }
                 Menu("稍后提醒", systemImage: "bell.badge") {
-                    Button("15 分钟后") { Task { await changeTask(item, snooze: 900) } }
-                    Button("1 小时后") { Task { await changeTask(item, snooze: 3600) } }
+                    Button("15 分钟后") { Task { await changeTask(item, snoozeUntil: Date().addingTimeInterval(900)) } }
+                    Button("1 小时后") { Task { await changeTask(item, snoozeUntil: Date().addingTimeInterval(3600)) } }
+                    Button("3 小时后") { Task { await changeTask(item, snoozeUntil: Date().addingTimeInterval(3 * 3600)) } }
+                    Button("明天上午 9:00") { Task { await changeTask(item, snoozeUntil: BeijingDates.nextMorning()) } }
                 }
             } else {
                 Button("重新打开", systemImage: "arrow.uturn.backward") { Task { await changeTask(item) } }
             }
+            Button("添加关联文档", systemImage: "doc.badge.plus") { openLinkedDocument(from: item) }
+        } else if item.fields.kind == .project {
+            Menu("添加关联内容", systemImage: "plus.circle") {
+                ForEach([ItemKind.task, .note, .event, .document, .paper, .award], id: \.self) { kind in
+                    Button("新建\(kind.label)", systemImage: kind.icon) {
+                        var draft = ItemFields.new(kind, category: item.fields.category)
+                        draft.projectID = item.id
+                        editor = .init(fields: draft)
+                    }
+                }
+            }
+        } else if item.fields.kind == .paper || item.fields.kind == .award {
+            Button("添加关联文档", systemImage: "doc.badge.plus") { openLinkedDocument(from: item) }
         } else {
             Button(item.fields.kind == .note ? "转为待办" : "添加后续待办", systemImage: "plus.circle") {
                 var draft = ItemFields.new(.task, category: item.fields.category)
@@ -144,6 +159,13 @@ struct ItemDetail: View {
         }
     }
 
+    private func openLinkedDocument(from item: Item) {
+        var draft = ItemFields.new(.document, category: item.fields.category)
+        draft.projectID = item.fields.projectID
+        draft.sourceID = item.id
+        editor = .init(fields: draft)
+    }
+
     private func load() async {
         do {
             let item = try await api.item(id)
@@ -151,12 +173,12 @@ struct ItemDetail: View {
             current = item
             error = nil
             await loadRelated(for: item)
-        } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+        } catch { if !Task.isCancelled { self.error = session.handleError(error) } }
     }
 
     private func loadRelated(for item: Item, append: Bool = false) async {
         let type = item.fields.kind
-        guard type == .project || type == .note || type == .duty else { return }
+        guard type != .document else { return }
         if append { working = true }
         defer { if append { working = false } }
         do {
@@ -168,25 +190,24 @@ struct ItemDetail: View {
                 related += page.items.filter { !known.contains($0.id) }
             } else { related = page.items }
             relatedHasMore = page.hasMore
-        } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+        } catch { if !Task.isCancelled { self.error = session.handleError(error) } }
     }
 
-    private func changeTask(_ item: Item, completed: Bool? = nil, snooze: TimeInterval? = nil) async {
+    private func changeTask(_ item: Item, completed: Bool? = nil, snoozeUntil: Date? = nil) async {
         guard !working else { return }
         working = true
         defer { working = false }
         var fields = item.fields
-        if let snooze {
-            let date = Date().addingTimeInterval(snooze)
-            if fields.status == .waiting { fields.followUpAt = date }
-            else { fields.remindAt = date }
+        if let snoozeUntil {
+            if fields.status == .waiting { fields.followUpAt = snoozeUntil }
+            else { fields.remindAt = snoozeUntil }
         } else if completed == true { fields.status = .completed }
         else { fields.status = .pending }
         do {
             current = try await api.update(item, with: fields)
             error = nil
             session.changed()
-        } catch { self.error = error.localizedDescription }
+        } catch { self.error = session.handleError(error) }
     }
 
     private func delete() async {
@@ -197,7 +218,7 @@ struct ItemDetail: View {
             try await api.delete(current)
             session.changed()
             dismiss()
-        } catch { self.error = error.localizedDescription }
+        } catch { self.error = session.handleError(error) }
     }
 
     private struct EditorRoute: Identifiable {

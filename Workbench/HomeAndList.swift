@@ -29,6 +29,8 @@ struct HomeView: View {
                 let urgent = Set(data.urgent.map(\.id))
                 itemSection("逾期事项", data.overdue.filter { !urgent.contains($0.id) })
                 itemSection("今日到期", data.dueToday.filter { !urgent.contains($0.id) })
+                let shown = urgent.union(data.overdue.map(\.id)).union(data.dueToday.map(\.id))
+                itemSection("等待中", data.waiting.filter { !shown.contains($0.id) })
                 if let duty = data.nextDuty, duty.daysRemaining != 0 { dutySection(duty) }
                 Section("关注的倒计时") {
                     Button { creation = .event } label: { Label("新建倒计时", systemImage: "plus.circle") }
@@ -79,6 +81,25 @@ struct HomeView: View {
 
     private func itemLink(_ item: Item) -> some View {
         NavigationLink { ItemDetail(api: api, id: item.id) } label: { ItemRow(item: item) }
+            .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                if item.fields.kind == .task && item.fields.status != .completed {
+                    Button { Task { await completeTask(item) } } label: {
+                        Label("完成", systemImage: "checkmark.circle")
+                    }
+                    .tint(.green)
+                }
+            }
+    }
+
+    private func completeTask(_ item: Item) async {
+        var fields = item.fields
+        fields.status = .completed
+        do {
+            _ = try await api.update(item, with: fields)
+            session.changed()
+        } catch {
+            self.error = session.handleError(error)
+        }
     }
 
     private func load() async {
@@ -87,7 +108,7 @@ struct HomeView: View {
             guard !Task.isCancelled else { return }
             data = result
             error = nil
-        } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+        } catch { if !Task.isCancelled { self.error = session.handleError(error) } }
     }
 }
 
@@ -104,29 +125,52 @@ struct ItemListView: View {
     @State private var error: String?
     @State private var query = ""
     @State private var year = ""
+    @State private var category: Category?
     @State private var status: ItemStatus?
-    @State private var kind: ItemKind = .note
+    @State private var kind: ItemKind? = nil
     @State private var creation: ItemKind?
+    @State private var createdDocument: ItemRoute?
 
     private let libraryKinds: [ItemKind] = [.note, .project, .document, .paper, .award]
     private var filterByYear: Bool { mode == .library && (kind == .paper || kind == .award) }
-    private var loadID: String { "\(kind.rawValue)|\(status?.rawValue ?? "")|\(query)|\(year)|\(session.refreshVersion)" }
+    private var cleanedYear: String? {
+        let digits = year.filter { $0.isASCII && $0.isNumber }
+        return filterByYear && digits.count == 4 ? digits : nil
+    }
+    private var loadID: String {
+        "\(kind?.rawValue ?? "all")|\(category?.rawValue ?? "")|\(status?.rawValue ?? "")|\(query)|\(cleanedYear ?? "")|\(session.refreshVersion)"
+    }
 
     var body: some View {
         List {
             Section {
                 if mode == .tasks {
+                    Picker("分类", selection: $category) {
+                        Text("全部").tag(Optional<Category>.none)
+                        ForEach(Category.allCases, id: \.self) { Text($0.label).tag(Optional($0)) }
+                    }
+                    .pickerStyle(.segmented)
                     Picker("状态", selection: $status) {
                         Text("全部状态").tag(Optional<ItemStatus>.none)
                         ForEach(ItemStatus.taskStatuses, id: \.self) { Text($0.label).tag(Optional($0)) }
                     }
                 } else {
                     Picker("资料类型", selection: $kind) {
-                        ForEach(libraryKinds, id: \.self) { Text($0.label).tag($0) }
+                        Text("全部类型").tag(Optional<ItemKind>.none)
+                        ForEach(libraryKinds, id: \.self) { Text($0.label).tag(Optional($0)) }
                     }
                     if filterByYear {
-                        TextField("年份（例如 2026）", text: $year)
-                            .keyboardType(.numberPad)
+                        HStack {
+                            TextField("年份（例如 2026）", text: $year)
+                                .keyboardType(.numberPad)
+                            if !year.isEmpty {
+                                Button { year = "" } label: {
+                                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.borderless)
+                                .accessibilityLabel("清除年份")
+                            }
+                        }
                     }
                 }
             }
@@ -137,6 +181,16 @@ struct ItemListView: View {
             }
             ForEach(items) { item in
                 NavigationLink { ItemDetail(api: api, id: item.id) } label: { ItemRow(item: item) }
+                    .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                        if item.fields.kind == .task {
+                            let done = item.fields.status == .completed
+                            Button { Task { await toggleTask(item) } } label: {
+                                Label(done ? "重开" : "完成",
+                                      systemImage: done ? "arrow.uturn.backward" : "checkmark.circle")
+                            }
+                            .tint(done ? .orange : .green)
+                        }
+                    }
             }
             if hasMore {
                 Button(paging ? "正在加载…" : "加载更多") { Task { await load(more: true) } }
@@ -147,19 +201,49 @@ struct ItemListView: View {
         .searchable(text: $query, prompt: mode == .tasks ? "搜索待办" : "搜索标题、文件名或正文")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button { creation = mode == .tasks ? .task : kind } label: {
-                    Label("新建", systemImage: "plus")
+                if mode == .tasks {
+                    Button { creation = .task } label: { Label("新建", systemImage: "plus") }
+                } else if let selectedKind = kind {
+                    Button { creation = selectedKind } label: { Label("新建", systemImage: "plus") }
+                } else {
+                    Menu {
+                        ForEach(libraryKinds, id: \.self) { choice in
+                            Button(choice.label, systemImage: choice.icon) { creation = choice }
+                        }
+                    } label: { Label("新建", systemImage: "plus") }
                 }
             }
+        }
+        .onChange(of: kind) { _, newKind in
+            if newKind != .paper && newKind != .award { year = "" }
         }
         .task(id: loadID) { await load() }
         .refreshable { await load() }
         .sheet(isPresented: Binding(get: { creation != nil }, set: { if !$0 { creation = nil } })) {
             if let creation {
                 NavigationStack {
-                    ItemEditor(api: api, draft: .new(creation)) { _ in session.changed() }
+                    ItemEditor(api: api, draft: .new(creation, category: mode == .tasks ? category : nil)) { saved in
+                        session.changed()
+                        if saved.fields.kind == .document {
+                            createdDocument = ItemRoute(id: saved.id)
+                        }
+                    }
                 }
             }
+        }
+        .navigationDestination(item: $createdDocument) { route in
+            ItemDetail(api: api, id: route.id)
+        }
+    }
+
+    private func toggleTask(_ item: Item) async {
+        var fields = item.fields
+        fields.status = fields.status == .completed ? .pending : .completed
+        do {
+            _ = try await api.update(item, with: fields)
+            session.changed()
+        } catch {
+            self.error = session.handleError(error)
         }
     }
 
@@ -179,8 +263,12 @@ struct ItemListView: View {
         }
         do {
             if !more && !query.isEmpty { try await Task.sleep(for: .milliseconds(250)) }
-            let result = try await api.items(kind: mode == .tasks ? .task : kind, status: status, keyword: query,
-                                             year: filterByYear && year.count == 4 ? year : nil, offset: more ? items.count : 0)
+            let result = try await api.items(kind: mode == .tasks ? .task : kind,
+                                             category: mode == .tasks ? category : nil,
+                                             status: mode == .tasks ? status : nil,
+                                             keyword: query,
+                                             year: cleanedYear,
+                                             offset: more ? items.count : 0)
             guard !Task.isCancelled, current == loadID else { return }
             if more {
                 let known = Set(items.map(\.id))
@@ -189,7 +277,7 @@ struct ItemListView: View {
             hasMore = result.hasMore
             error = nil
         } catch {
-            if !Task.isCancelled, current == loadID { self.error = error.localizedDescription }
+            if !Task.isCancelled, current == loadID { self.error = session.handleError(error) }
         }
     }
 }

@@ -117,7 +117,7 @@ workflows:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             WORKBENCH_APNS_ENABLED=NO \
-            WORKBENCH_PUSH_ENTITLEMENTS= \
+            WORKBENCH_PUSH_ENTITLEMENTS=Workbench/WorkbenchAppGroup.entitlements \
             2>&1 | tee build/device-build.log
       - name: Package IPA for AltStore signing
         script: |

@@ -1,6 +1,7 @@
 import Foundation
 import Security
 import SwiftUI
+import WidgetKit
 
 private enum CredentialStore {
     private static var key: [String: Any] {
@@ -106,10 +107,25 @@ final class SessionStore: ObservableObject {
             username = ""
             message = nil
             pushMessage = nil
+            WidgetSnapshotStore.save(.signedOut)
+            WidgetCenter.shared.reloadAllTimelines()
         } catch { message = error.localizedDescription }
     }
 
     func changed() { refreshVersion &+= 1 }
+
+    func handleError(_ error: Error) -> String {
+        if (error as? APIError)?.unauthorized == true {
+            try? CredentialStore.remove()
+            self.api = nil
+            self.username = ""
+            self.pushMessage = nil
+            self.message = "登录凭据已失效，请重新登录。"
+            WidgetSnapshotStore.save(.signedOut)
+            WidgetCenter.shared.reloadAllTimelines()
+        }
+        return error.localizedDescription
+    }
 
     func syncPush(_ token: String, environment: String) async {
         guard let api, !loading, !disablingPush else { return }
@@ -180,14 +196,15 @@ struct SignInView: View {
                 } header: {
                     Text("工作台账号")
                 } footer: {
-                    Text("通过 HTTPS 连接 dzz.mcdkf.top:7736。登录凭据保存在本机钥匙串。")
+                    Text("通过 HTTPS 连接 \(WorkbenchAPI.serverHostDisplay)。登录凭据保存在本机钥匙串。")
                 }
             }
         }
     }
 
     private func signIn() {
-        guard !session.loading, !username.isEmpty, !password.isEmpty else { return }
-        Task { await session.signIn(username: username, password: password) }
+        let trimmed = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !session.loading, !trimmed.isEmpty, !password.isEmpty else { return }
+        Task { await session.signIn(username: trimmed, password: password) }
     }
 }

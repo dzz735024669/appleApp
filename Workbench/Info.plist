@@ -20,5 +20,16 @@
     <array><string>UIInterfaceOrientationPortrait</string></array>
     <key>WorkbenchAPNSEnabled</key><string>$(WORKBENCH_APNS_ENABLED)</string>
     <key>WorkbenchAPNSEnvironment</key><string>$(WORKBENCH_APNS_ENVIRONMENT)</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>CFBundleURLName</key><string>top.mcdkf.dzz.workbench</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>workbench</string>
+            </array>
+        </dict>
+    </array>
 </dict>
 </plist>

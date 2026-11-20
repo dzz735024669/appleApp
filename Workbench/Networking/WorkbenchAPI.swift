@@ -48,7 +48,26 @@ private final class NoRedirects: NSObject, URLSessionTaskDelegate, @unchecked Se
 
 struct WorkbenchAPI {
     static let endpoint = URL(string: "https://dzz.mcdkf.top:7736/api/v1")!
+    static let serverHostDisplay = "dzz.mcdkf.top:7736"
     static let attachmentLimit = 20 * 1024 * 1024
+
+    private static let isoLock = NSLock()
+    private static let isoWithFractional: ISO8601DateFormatter = {
+        let format = ISO8601DateFormatter()
+        format.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return format
+    }()
+    private static let isoStandard: ISO8601DateFormatter = {
+        let format = ISO8601DateFormatter()
+        format.formatOptions = [.withInternetDateTime]
+        return format
+    }()
+
+    private static func parseISO8601(_ value: String) -> Date? {
+        isoLock.lock()
+        defer { isoLock.unlock() }
+        return isoWithFractional.date(from: value) ?? isoStandard.date(from: value)
+    }
 
     private static let transport: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
@@ -66,11 +85,7 @@ struct WorkbenchAPI {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { input in
             let value = try input.singleValueContainer().decode(String.self)
-            let format = ISO8601DateFormatter()
-            format.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            if let date = format.date(from: value) { return date }
-            format.formatOptions = [.withInternetDateTime]
-            guard let date = format.date(from: value) else { throw APIError.malformedResponse }
+            guard let date = Self.parseISO8601(value) else { throw APIError.malformedResponse }
             return date
         }
         return decoder
@@ -142,10 +157,10 @@ struct WorkbenchAPI {
         }
     }
 
-    func items(kind: ItemKind? = nil, status: ItemStatus? = nil, keyword: String? = nil,
+    func items(kind: ItemKind? = nil, category: Category? = nil, status: ItemStatus? = nil, keyword: String? = nil,
                projectID: UUID? = nil, sourceID: UUID? = nil, year: String? = nil, offset: Int = 0) async throws -> ItemPage {
         let filters: [(String, String?)] = [
-            ("kind", kind?.rawValue), ("status", status?.rawValue), ("q", keyword),
+            ("kind", kind?.rawValue), ("category", category?.rawValue), ("status", status?.rawValue), ("q", keyword),
             ("project_id", projectID?.urlKey), ("source_id", sourceID?.urlKey), ("year", year), ("offset", String(offset))
         ]
         let query = filters.compactMap { filter -> URLQueryItem? in
@@ -194,6 +209,10 @@ struct WorkbenchAPI {
         var request = try request(["items", id.urlKey, "attachments", file.id.urlKey])
         request.setValue("*/*", forHTTPHeaderField: "Accept")
         return try await perform(request)
+    }
+
+    func deleteAttachment(_ file: Attachment, from id: UUID) async throws {
+        _ = try await perform(request(["items", id.urlKey, "attachments", file.id.urlKey], method: "DELETE"))
     }
 
     func shifts(start: String, end: String) async throws -> [Item] {

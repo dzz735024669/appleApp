@@ -6,6 +6,8 @@ final class ClipboardImportModel: ObservableObject {
         let id: UUID
         var fields: ItemFields
         let evidence: String
+        let timeHints: [ClipboardTimeHint]
+        let suggestedDates: [String: Date]
         let warnings: [String]
         let missingFields: [String]
         var reviewed: Bool
@@ -55,8 +57,10 @@ final class ClipboardImportModel: ObservableObject {
             entries = output.candidates.map { candidate in
                 if let old = previous[candidate.id], old.created != nil { return old }
                 return Draft(id: candidate.id, fields: candidate.fields, evidence: candidate.evidence,
+                             timeHints: candidate.timeHints, suggestedDates: candidate.suggestedDates,
                              warnings: candidate.warnings, missingFields: candidate.missingFields,
-                             reviewed: candidate.status != "needs_details", selected: candidate.status == "ready")
+                             reviewed: candidate.status != "needs_details",
+                             selected: candidate.status == "ready" || candidate.status == "record")
             }
         } catch {
             self.error = error.localizedDescription
@@ -76,10 +80,21 @@ final class ClipboardImportModel: ObservableObject {
         var fields = ItemFields.new(.note)
         fields.title = String(normalizedText.prefix(60))
         fields.body = normalizedText
-        entries = [Draft(id: UUID(), fields: fields, evidence: normalizedText, warnings: [], missingFields: [],
-                         reviewed: true, selected: true)]
+        entries = [Draft(id: UUID(), fields: fields, evidence: normalizedText, timeHints: [], suggestedDates: [:],
+                         warnings: [], missingFields: [], reviewed: true, selected: true)]
         parsedText = normalizedText
         error = nil
+    }
+
+    func clear() {
+        guard !busy else { return }
+        text = ""
+        entries = []
+        response = nil
+        error = nil
+        parsedText = nil
+        requestText = nil
+        requestID = UUID()
     }
 
     func create(api: WorkbenchAPI, session: SessionStore) async {
@@ -198,7 +213,14 @@ struct ClipboardImportView: View {
         }
         .navigationTitle("剪贴板识别")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() }.disabled(model.busy) } }
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() }.disabled(model.busy) }
+            if !model.text.isEmpty || !model.entries.isEmpty {
+                ToolbarItem(placement: .primaryAction) {
+                    Button("清空") { model.clear() }.disabled(model.busy)
+                }
+            }
+        }
         .interactiveDismissDisabled(model.busy)
         .confirmationDialog("创建选中的 \(model.selectedCount) 项？", isPresented: $confirming, titleVisibility: .visible) {
             Button("确认创建") { Task { await model.create(api: api, session: session) } }
@@ -206,7 +228,7 @@ struct ClipboardImportView: View {
         .sheet(item: $editID) { route in
             if let draft = model.entries.first(where: { $0.id == route.id }) {
                 NavigationStack {
-                    ItemEditor(api: api, draft: draft.fields,
+                    ItemEditor(api: api, draft: draft.fields, suggestedDates: draft.suggestedDates,
                                onDraftSave: { model.edit(route.id, fields: $0) }, onSave: { _ in })
                 }
             }

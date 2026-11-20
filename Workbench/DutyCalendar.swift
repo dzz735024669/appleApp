@@ -52,15 +52,21 @@ struct DutyCalendarView: View {
             }
             if let error { InlineError(message: error) }
             Section("本月值班") {
-                if loading { ProgressView() }
+                if loading && shifts.isEmpty { ProgressView() }
                 else if shifts.isEmpty { Text("本月暂无值班").foregroundStyle(.secondary) }
                 ForEach(shifts) { shift in
-                    NavigationLink { ItemDetail(api: api, id: shift.id) } label: { ItemRow(item: shift) }
+                    NavigationLink { ItemDetail(api: api, id: shift.id) } label: { shiftRow(shift) }
                 }
             }
         }
         .navigationTitle("值班日历")
         .toolbar {
+            if !isCurrentMonth {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("本月") { month = BeijingDates.monthInterval(.now).start }
+                        .disabled(saving)
+                }
+            }
             ToolbarItem(placement: .primaryAction) {
                 Menu {
                     Button("生成 9 天轮值", systemImage: "calendar.badge.plus") { sheet = .schedule }
@@ -98,10 +104,37 @@ struct DutyCalendarView: View {
         return draft
     }
 
+    private var isCurrentMonth: Bool {
+        BeijingDates.key(month) == BeijingDates.key(BeijingDates.monthInterval(.now).start)
+    }
+
+    private func shiftRow(_ shift: Item) -> some View {
+        let todayKey = BeijingDates.key(.now)
+        let dateKey = shift.fields.date ?? ""
+        let stateLabel: String
+        let stateColor: Color
+        if dateKey == todayKey {
+            stateLabel = "今日值班"
+            stateColor = .accentColor
+        } else if dateKey < todayKey {
+            stateLabel = "已过去"
+            stateColor = .secondary
+        } else {
+            stateLabel = "即将值班"
+            stateColor = .primary
+        }
+        return HStack {
+            ItemRow(item: shift)
+            Text(stateLabel)
+                .font(.caption.weight(dateKey == todayKey ? .semibold : .regular))
+                .foregroundStyle(stateColor)
+        }
+        .opacity(dateKey < todayKey ? 0.65 : 1)
+    }
+
     private func monthButton(_ offset: Int, title: String, icon: String) -> some View {
         Button {
             if let next = BeijingDates.calendar.date(byAdding: .month, value: offset, to: month) {
-                shifts = []
                 month = next
             }
         } label: {
@@ -113,11 +146,14 @@ struct DutyCalendarView: View {
 
     private func dayButton(_ day: Date) -> some View {
         let key = BeijingDates.key(day)
+        let todayKey = BeijingDates.key(.now)
         let shift = shifts.first(where: { $0.fields.date == key })
         let isSelected = selected.contains(key)
-        let isToday = key == BeijingDates.key(.now)
+        let isToday = key == todayKey
+        let isPast = key < todayKey
         return Button {
             if selecting {
+                guard shift == nil else { return }
                 if !selected.insert(key).inserted { selected.remove(key) }
             } else if let shift { detail = ItemRoute(id: shift.id) }
             else { sheet = .single(key) }
@@ -126,17 +162,23 @@ struct DutyCalendarView: View {
                 Text(BeijingDates.format(day, pattern: "d"))
                     .font(.body.weight(shift == nil && !isToday ? .regular : .semibold))
                 if isSelected { Image(systemName: "checkmark").font(.caption2) }
-                else if shift != nil { Text("值班").font(.caption2) }
+                else if shift != nil { Text(isToday ? "今日" : "值班").font(.caption2) }
                 else if isToday { Text("今天").font(.caption2) }
             }
             .frame(maxWidth: .infinity, minHeight: 44)
-            .foregroundStyle(isSelected ? Color.white : (shift != nil ? Color.accentColor : Color.primary))
-            .background(isSelected ? Color.accentColor : Color.accentColor.opacity(shift == nil ? 0.02 : 0.12),
+            .foregroundStyle(isSelected ? Color.white
+                             : (shift != nil ? (isPast ? Color.secondary : Color.accentColor)
+                                : (isPast ? Color.secondary : Color.primary)))
+            .background(isSelected ? Color.accentColor
+                        : (shift != nil ? Color.accentColor.opacity(isToday ? 0.25 : (isPast ? 0.06 : 0.14))
+                           : Color.accentColor.opacity(0.02)),
                         in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8)
+                .stroke(isToday && !isSelected ? Color.accentColor : Color.clear, lineWidth: 1.5))
         }
         .buttonStyle(.borderless)
-        .accessibilityLabel("\(key)\(shift == nil ? "" : "，值班")\(isSelected ? "，已选中" : "")")
-        .disabled(saving || (loading && !selecting))
+        .accessibilityLabel("\(key)\(shift == nil ? "" : (isPast ? "，已过去的值班" : "，值班"))\(isSelected ? "，已选中" : "")")
+        .disabled(saving || (loading && !selecting) || (selecting && shift != nil))
     }
 
     private func load() async {
@@ -150,7 +192,7 @@ struct DutyCalendarView: View {
             guard !Task.isCancelled, requested == month else { return }
             shifts = result
             error = nil
-        } catch { if !Task.isCancelled, requested == month { self.error = error.localizedDescription } }
+        } catch { if !Task.isCancelled, requested == month { self.error = session.handleError(error) } }
     }
 
     private func saveSelection() async {
@@ -162,7 +204,7 @@ struct DutyCalendarView: View {
             selecting = false
             selected.removeAll()
             session.changed()
-        } catch { self.error = error.localizedDescription }
+        } catch { self.error = session.handleError(error) }
     }
 
     private enum CalendarSheet: Identifiable {
