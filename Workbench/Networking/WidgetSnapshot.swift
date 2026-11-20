@@ -92,9 +92,36 @@ enum WidgetSnapshotStore {
     static let appGroupID = "group.top.mcdkf.dzz.workbench"
     static let storageKey = "workbench.widget.snapshot.v1"
 
-    private static var defaults: UserDefaults? {
-        UserDefaults(suiteName: appGroupID)
+    static func resolveGroup(_ signedGroups: [String], accessible: (String) -> Bool) -> String? {
+        let candidates = signedGroups.filter { $0.hasPrefix(appGroupID + ".") }
+        return ([appGroupID] + candidates).first(where: accessible)
     }
+
+    private static var defaults: UserDefaults? {
+        #if os(iOS)
+        let bundle = Bundle.main
+        var groups = bundle.object(forInfoDictionaryKey: "ALTAppGroups") as? [String] ?? []
+        if let profile = bundle.url(forResource: "embedded", withExtension: "mobileprovision"),
+           let data = try? Data(contentsOf: profile),
+           let start = data.range(of: Data("<?xml".utf8)),
+           let end = data.range(of: Data("</plist>".utf8), in: start.lowerBound..<data.endIndex),
+           let extracted = try? PropertyListSerialization.propertyList(
+               from: data.subdata(in: start.lowerBound..<end.upperBound), format: nil
+           ) as? [String: Any],
+           let entitlements = extracted["Entitlements"] as? [String: Any],
+           let authorized = entitlements["com.apple.security.application-groups"] as? [String] {
+            groups.append(contentsOf: authorized)
+        }
+        guard let group = resolveGroup(groups, accessible: {
+            FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: $0) != nil
+        }) else { return nil }
+        return UserDefaults(suiteName: group)
+        #else
+        return nil
+        #endif
+    }
+
+    static var isAvailable: Bool { defaults != nil }
 
     static func save(_ snapshot: WidgetSnapshot, to defaults: UserDefaults? = nil) {
         guard let store = defaults ?? Self.defaults,

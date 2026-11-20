@@ -153,6 +153,11 @@ struct SettingsView: View {
                 LabeledContent("服务器", value: WorkbenchAPI.serverHostDisplay)
                 LabeledContent("日历时区", value: "北京时间")
             }
+            Section("小组件") {
+                LabeledContent("共享权限", value: WidgetSnapshotStore.isAvailable ? "可用" : "不可用")
+                Button("同步小组件") { session.changed() }
+                    .disabled(!WidgetSnapshotStore.isAvailable)
+            }
             Section("提醒") {
                 if push.buildSupportsPush {
                     Text(session.pushMessage ?? push.status)

@@ -379,7 +379,9 @@ struct WorkbenchWidgetEntryView: View {
             Label("个人工作台", systemImage: "square.grid.2x2.fill")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(accent)
-            Text("打开 App 登录后显示值班与紧急待办")
+            Text(WidgetSnapshotStore.isAvailable
+                 ? "打开 App 登录或同步小组件"
+                 : "小组件共享权限不可用，请重新签名安装")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }

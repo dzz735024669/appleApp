@@ -119,7 +119,7 @@ workflows:
             WORKBENCH_APNS_ENABLED=NO \
             WORKBENCH_PUSH_ENTITLEMENTS=Workbench/WorkbenchAppGroup.entitlements \
             2>&1 | tee build/device-build.log
-      - name: Package IPA for AltStore signing
+      - name: Package IPA with widget entitlements
         script: |
           set -euo pipefail
           python3 - <<'PY'
@@ -141,7 +141,24 @@ workflows:
           print("Validated device application:", architectures)
           PY
           mkdir -p build/free-install/Payload
-          ditto build/DeviceDerivedData/Build/Products/Release-iphoneos/Workbench.app build/free-install/Payload/Workbench.app
+          app=build/free-install/Payload/Workbench.app
+          widget="$app/PlugIns/WorkbenchWidget.appex"
+          ditto build/DeviceDerivedData/Build/Products/Release-iphoneos/Workbench.app "$app"
+          codesign --force --sign - --generate-entitlement-der \
+            --entitlements WorkbenchWidget/WorkbenchWidget.entitlements "$widget"
+          codesign --force --sign - --generate-entitlement-der \
+            --entitlements Workbench/WorkbenchAppGroup.entitlements "$app"
+          python3 - "$app" "$widget" <<'PY'
+          import plistlib
+          import subprocess
+          import sys
+
+          for bundle in sys.argv[1:]:
+              info = subprocess.check_output(["codesign", "-d", "--entitlements", ":-", bundle])
+              groups = plistlib.loads(info)["com.apple.security.application-groups"]
+              if groups != ["group.top.mcdkf.dzz.workbench"]:
+                  raise SystemExit(f"Unexpected App Group for {bundle}: {groups}")
+          PY
           cd build/free-install
           ditto -c -k --keepParent Payload Workbench-unsigned.ipa
           unzip -t Workbench-unsigned.ipa

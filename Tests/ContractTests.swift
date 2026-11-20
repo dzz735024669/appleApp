@@ -108,4 +108,12 @@ final class ContractTests: XCTestCase {
         XCTAssertEqual(decoded.urgentTasks.count, 2)
         XCTAssertEqual(decoded.nextDuty?.date, "2026-11-20")
     }
+    func testWidgetGroupRequiresSystemAccessAndAcceptsResignedIdentifier() {
+        let original = WidgetSnapshotStore.appGroupID
+        let renamed = original + ".TEAM123"
+        let unrelated = "group.other.TEAM123"
+        XCTAssertEqual(WidgetSnapshotStore.resolveGroup([renamed]) { $0 == renamed }, renamed)
+        XCTAssertEqual(WidgetSnapshotStore.resolveGroup([renamed]) { _ in true }, original)
+        XCTAssertNil(WidgetSnapshotStore.resolveGroup([unrelated, renamed]) { $0 == unrelated })
+    }
 }
