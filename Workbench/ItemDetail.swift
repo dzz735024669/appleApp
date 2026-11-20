@@ -57,7 +57,9 @@ struct ItemDetail: View {
         .confirmationDialog("删除这条内容？", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("确认删除", role: .destructive) { Task { await delete() } }
         } message: {
-            Text("关联附件也会被删除。")
+            Text(current?.fields.kind == .project
+                 ? "请先解除其他事项与此项目的关联。删除后，项目自身的附件也会被删除。"
+                 : "关联附件也会被删除。")
         }
     }
 

@@ -241,7 +241,7 @@ struct AttachmentSection: View {
         }
     }
 
-    private struct CameraPicker: UIViewControllerRepresentable {
+    struct CameraPicker: UIViewControllerRepresentable {
         let finished: (UIImage?) -> Void
 
         func makeCoordinator() -> Coordinator { Coordinator(finished: finished) }

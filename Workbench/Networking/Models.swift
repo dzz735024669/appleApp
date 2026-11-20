@@ -82,12 +82,14 @@ enum Impact: String, Codable, NamedChoice {
 
 enum NoteType: String, Codable, NamedChoice {
     case note, issue, reflection, meeting
+    case workMaterial = "work_material"
     var label: String {
         switch self {
         case .note: return "随手记"
         case .issue: return "问题"
         case .reflection: return "心得"
         case .meeting: return "会议纪要"
+        case .workMaterial: return "工作材料"
         }
     }
 }

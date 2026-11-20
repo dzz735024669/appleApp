@@ -13,6 +13,7 @@ struct HomeView: View {
     @State private var completing: Set<UUID> = []
     @State private var completed: Set<UUID> = []
     @StateObject private var clipboard = ClipboardImportModel()
+    @StateObject private var photo = ClipboardImportModel()
 
     var body: some View {
         ScrollView {
@@ -61,6 +62,8 @@ struct HomeView: View {
                 if let creation {
                     if let kind = creation.kind {
                         ItemEditor(api: api, draft: .new(kind, category: category)) { _ in session.changed() }
+                    } else if creation == .photo {
+                        ClipboardImportView(api: api, model: photo, photoMode: true)
                     } else {
                         ClipboardImportView(api: api, model: clipboard)
                     }
@@ -272,7 +275,7 @@ struct HomeView: View {
     }
 
     private enum Creation: String, CaseIterable, Identifiable {
-        case note, task, clipboard, event
+        case note, task, clipboard, photo, event
 
         var id: Self { self }
 
@@ -280,7 +283,7 @@ struct HomeView: View {
             switch self {
             case .note: return .note
             case .task: return .task
-            case .clipboard: return nil
+            case .clipboard, .photo: return nil
             case .event: return .event
             }
         }
@@ -290,17 +293,18 @@ struct HomeView: View {
             case .note: return "随手记"
             case .task: return "待办"
             case .clipboard: return "识别剪贴板"
+            case .photo: return "识别照片"
             case .event: return "倒计时"
             }
         }
 
-        var icon: String { kind?.icon ?? "doc.on.clipboard" }
+        var icon: String { kind?.icon ?? (self == .photo ? "camera.viewfinder" : "doc.on.clipboard") }
     }
 }
 
 @MainActor
 struct ItemListView: View {
-    enum Mode { case tasks, library }
+    enum Mode { case tasks, library, projects }
     let api: WorkbenchAPI
     let mode: Mode
     @EnvironmentObject private var session: SessionStore
@@ -319,6 +323,13 @@ struct ItemListView: View {
 
     private let libraryKinds: [ItemKind] = [.note, .project, .document, .paper, .award]
     private var filterByYear: Bool { mode == .library && (kind == .paper || kind == .award) }
+    private var title: String {
+        switch mode {
+        case .tasks: return "待办"
+        case .library: return "资料"
+        case .projects: return "项目管理"
+        }
+    }
     private var cleanedYear: String? {
         let digits = year.filter { $0.isASCII && $0.isNumber }
         return filterByYear && digits.count == 4 ? digits : nil
@@ -340,7 +351,17 @@ struct ItemListView: View {
                         Text("全部状态").tag(Optional<ItemStatus>.none)
                         ForEach(ItemStatus.taskStatuses, id: \.self) { Text($0.label).tag(Optional($0)) }
                     }
+                } else if mode == .projects {
+                    Picker("项目状态", selection: $status) {
+                        Text("全部状态").tag(Optional<ItemStatus>.none)
+                        ForEach(ItemStatus.projectStatuses, id: \.self) { Text($0.label).tag(Optional($0)) }
+                    }
                 } else {
+                    NavigationLink {
+                        ItemListView(api: api, mode: .projects)
+                    } label: {
+                        Label("项目管理", systemImage: "folder.badge.gearshape")
+                    }
                     Picker("资料类型", selection: $kind) {
                         Text("全部类型").tag(Optional<ItemKind>.none)
                         ForEach(libraryKinds, id: \.self) { Text($0.label).tag(Optional($0)) }
@@ -363,7 +384,7 @@ struct ItemListView: View {
             if let error { InlineError(message: error) }
             if loading && items.isEmpty { ProgressView() }
             if !loading && items.isEmpty && error == nil {
-                ContentUnavailableView(mode == .tasks ? "暂无待办" : "暂无资料", systemImage: "tray")
+                ContentUnavailableView(mode == .projects ? "暂无项目" : (mode == .tasks ? "暂无待办" : "暂无资料"), systemImage: "tray")
             }
             ForEach(items) { item in
                 NavigationLink { ItemDetail(api: api, id: item.id) } label: { ItemRow(item: item) }
@@ -383,12 +404,14 @@ struct ItemListView: View {
                     .disabled(paging || loading)
             }
         }
-        .navigationTitle(mode == .tasks ? "待办" : "资料")
-        .searchable(text: $query, prompt: mode == .tasks ? "搜索待办" : "搜索标题、文件名或正文")
+        .navigationTitle(title)
+        .searchable(text: $query, prompt: mode == .projects ? "搜索项目" : (mode == .tasks ? "搜索待办" : "搜索标题、文件名或正文"))
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 if mode == .tasks {
                     Button { creation = .task } label: { Label("新建", systemImage: "plus") }
+                } else if mode == .projects {
+                    Button { creation = .project } label: { Label("新建项目", systemImage: "plus") }
                 } else if let selectedKind = kind {
                     Button { creation = selectedKind } label: { Label("新建", systemImage: "plus") }
                 } else {
@@ -449,9 +472,9 @@ struct ItemListView: View {
         }
         do {
             if !more && !query.isEmpty { try await Task.sleep(for: .milliseconds(250)) }
-            let result = try await api.items(kind: mode == .tasks ? .task : kind,
+            let result = try await api.items(kind: mode == .projects ? .project : (mode == .tasks ? .task : kind),
                                              category: mode == .tasks ? category : nil,
-                                             status: mode == .tasks ? status : nil,
+                                             status: mode == .library ? nil : status,
                                              keyword: query,
                                              year: cleanedYear,
                                              offset: more ? items.count : 0)

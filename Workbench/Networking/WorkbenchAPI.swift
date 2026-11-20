@@ -157,6 +157,19 @@ struct WorkbenchAPI {
         }
     }
 
+    func parsePhoto(_ jpeg: Data, requestID: UUID) async throws -> ClipboardParse {
+        var output = try request(["ai", "photo", "parse"], method: "POST")
+        output.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
+        output.setValue(requestID.uuidString, forHTTPHeaderField: "X-Request-ID")
+        output.httpBody = jpeg
+        output.timeoutInterval = 40
+        do {
+            return try await fetch(output)
+        } catch APIError.rejected(409, let detail) {
+            throw APIError.recognitionConflict(detail ?? "照片仍在识别中，请稍后重试。")
+        }
+    }
+
     func items(kind: ItemKind? = nil, category: Category? = nil, status: ItemStatus? = nil, keyword: String? = nil,
                projectID: UUID? = nil, sourceID: UUID? = nil, year: String? = nil, offset: Int = 0) async throws -> ItemPage {
         let filters: [(String, String?)] = [
