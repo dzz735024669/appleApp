@@ -13,6 +13,7 @@
     <key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
     <key>LSRequiresIPhoneOS</key><true/>
     <key>NSCameraUsageDescription</key><string>拍照识别工作台事项，或为记录、待办和值班添加照片附件。</string>
+    <key>NSMicrophoneUsageDescription</key><string>录制你主动口述的内容，用于转写和生成工作台事项。</string>
     <key>UIApplicationSceneManifest</key>
     <dict><key>UIApplicationSupportsMultipleScenes</key><false/></dict>
     <key>UILaunchScreen</key><dict/>

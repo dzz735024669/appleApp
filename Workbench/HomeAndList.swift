@@ -14,6 +14,7 @@ struct HomeView: View {
     @State private var completed: Set<UUID> = []
     @StateObject private var clipboard = ClipboardImportModel()
     @StateObject private var photo = ClipboardImportModel()
+    @StateObject private var voice = ClipboardImportModel()
 
     var body: some View {
         ScrollView {
@@ -64,6 +65,8 @@ struct HomeView: View {
                         ItemEditor(api: api, draft: .new(kind, category: category)) { _ in session.changed() }
                     } else if creation == .photo {
                         ClipboardImportView(api: api, model: photo, photoMode: true)
+                    } else if creation == .voice {
+                        ClipboardImportView(api: api, model: voice, voiceMode: true)
                     } else {
                         ClipboardImportView(api: api, model: clipboard)
                     }
@@ -275,7 +278,7 @@ struct HomeView: View {
     }
 
     private enum Creation: String, CaseIterable, Identifiable {
-        case note, task, clipboard, photo, event
+        case note, task, clipboard, photo, voice, event
 
         var id: Self { self }
 
@@ -283,7 +286,7 @@ struct HomeView: View {
             switch self {
             case .note: return .note
             case .task: return .task
-            case .clipboard, .photo: return nil
+            case .clipboard, .photo, .voice: return nil
             case .event: return .event
             }
         }
@@ -294,11 +297,18 @@ struct HomeView: View {
             case .task: return "待办"
             case .clipboard: return "识别剪贴板"
             case .photo: return "识别照片"
+            case .voice: return "语音记录"
             case .event: return "倒计时"
             }
         }
 
-        var icon: String { kind?.icon ?? (self == .photo ? "camera.viewfinder" : "doc.on.clipboard") }
+        var icon: String {
+            switch self {
+            case .photo: return "camera.viewfinder"
+            case .voice: return "mic"
+            default: return kind?.icon ?? "doc.on.clipboard"
+            }
+        }
     }
 }
 

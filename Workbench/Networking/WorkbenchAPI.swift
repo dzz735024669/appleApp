@@ -170,6 +170,17 @@ struct WorkbenchAPI {
         }
     }
 
+    func transcribeVoice(_ wav: Data, requestID: UUID) async throws -> String {
+        struct Transcript: Decodable { let text: String }
+        var output = try request(["ai", "voice", "transcribe"], method: "POST")
+        output.setValue("audio/wav", forHTTPHeaderField: "Content-Type")
+        output.setValue(requestID.uuidString, forHTTPHeaderField: "X-Request-ID")
+        output.httpBody = wav
+        output.timeoutInterval = 40
+        let result: Transcript = try await fetch(output)
+        return result.text
+    }
+
     func items(kind: ItemKind? = nil, category: Category? = nil, status: ItemStatus? = nil, keyword: String? = nil,
                projectID: UUID? = nil, sourceID: UUID? = nil, year: String? = nil, offset: Int = 0) async throws -> ItemPage {
         let filters: [(String, String?)] = [

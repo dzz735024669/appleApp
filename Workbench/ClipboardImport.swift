@@ -1,7 +1,118 @@
+import AVFAudio
+import AudioToolbox
 import ImageIO
 import PhotosUI
 import SwiftUI
 import UIKit
+
+@MainActor
+private final class VoiceCapture: ObservableObject {
+    @Published private(set) var isRecording = false
+    @Published private(set) var transcribing = false
+    @Published private(set) var audio: Data?
+    @Published private(set) var error: String?
+    @Published private var requestingPermission = false
+
+    private var recorder: AVAudioRecorder?
+    private var limitTask: Task<Void, Never>?
+    private var requestID = UUID()
+    var busy: Bool { requestingPermission || isRecording || transcribing }
+
+    func start() async -> Bool {
+        guard !busy else { return false }
+        requestingPermission = true
+        error = nil
+        defer { requestingPermission = false }
+        guard await AVAudioApplication.requestRecordPermission() else {
+            error = "请在 iPhone 设置中允许个人工作台访问麦克风。"
+            return false
+        }
+        let session = AVAudioSession.sharedInstance()
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
+        do {
+            try session.setCategory(.record, mode: .default)
+            try session.setActive(true)
+            let settings: [String: Any] = [
+                AVFormatIDKey: kAudioFormatLinearPCM,
+                AVSampleRateKey: 16_000,
+                AVNumberOfChannelsKey: 1,
+                AVLinearPCMBitDepthKey: 16,
+                AVLinearPCMIsFloatKey: false,
+                AVLinearPCMIsBigEndianKey: false,
+            ]
+            let recorder = try AVAudioRecorder(url: file, settings: settings)
+            guard recorder.record(forDuration: 60) else { throw APIError.emptyFile }
+            self.recorder = recorder
+            audio = nil
+            requestID = UUID()
+            isRecording = true
+            limitTask = Task { [weak self] in
+                do { try await Task.sleep(for: .seconds(60)) }
+                catch { return }
+                self?.stop()
+            }
+            return true
+        } catch {
+            try? FileManager.default.removeItem(at: file)
+            try? session.setActive(false, options: .notifyOthersOnDeactivation)
+            self.error = "未能开始录音，请检查麦克风后重试。"
+            return false
+        }
+    }
+
+    func stop() {
+        finish(keepAudio: true)
+    }
+
+    func discardRecording() {
+        finish(keepAudio: false)
+    }
+
+    private func finish(keepAudio: Bool) {
+        guard let recorder else { return }
+        self.recorder = nil
+        limitTask?.cancel()
+        limitTask = nil
+        recorder.stop()
+        let file = recorder.url
+        defer {
+            try? FileManager.default.removeItem(at: file)
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            isRecording = false
+        }
+        guard keepAudio else { return }
+        guard let data = try? Data(contentsOf: file), data.count > 44 else {
+            error = "没有录到语音，请重新录制。"
+            return
+        }
+        audio = data
+    }
+
+    func transcribe(api: WorkbenchAPI) async -> String? {
+        guard !busy, let audio else { return nil }
+        transcribing = true
+        error = nil
+        defer { transcribing = false }
+        do {
+            let transcript = try await api.transcribeVoice(audio, requestID: requestID)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !transcript.isEmpty else {
+                error = "没有识别到清楚的语音，可以重新录音。"
+                return nil
+            }
+            return transcript
+        } catch {
+            self.error = error.localizedDescription
+            return nil
+        }
+    }
+
+    func clear() {
+        guard !busy else { return }
+        audio = nil
+        error = nil
+    }
+}
 
 @MainActor
 final class ClipboardImportModel: ObservableObject {
@@ -156,8 +267,11 @@ struct ClipboardImportView: View {
     let api: WorkbenchAPI
     @ObservedObject var model: ClipboardImportModel
     var photoMode = false
+    var voiceMode = false
     @EnvironmentObject private var session: SessionStore
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
+    @StateObject private var voiceCapture = VoiceCapture()
     @State private var editID: ItemRoute?
     @State private var confirming = false
     @State private var selection: PhotosPickerItem?
@@ -167,30 +281,34 @@ struct ClipboardImportView: View {
 
     var body: some View {
         Form {
+            if voiceMode { voiceInput }
             if photoMode { photoInput }
-            else { Section {
-                PasteButton(payloadType: String.self) { strings in model.text = strings.joined(separator: "\n") }
-                    .disabled(model.busy)
+            else if !voiceCapture.isRecording { Section {
+                if !voiceMode {
+                    PasteButton(payloadType: String.self) { strings in model.text = strings.joined(separator: "\n") }
+                        .disabled(model.busy)
+                }
                 TextEditor(text: $model.text)
                     .frame(minHeight: 140)
-                    .accessibilityLabel("待识别的剪贴板文字")
-                    .disabled(model.busy)
+                    .accessibilityLabel(voiceMode ? "可编辑的转写文字" : "待识别的剪贴板文字")
+                    .disabled(model.busy || voiceCapture.busy)
                 Text("\(model.characterCount) / 6000 字").font(.caption)
                     .foregroundStyle(model.characterCount > 6000 ? Color.red : Color.secondary)
-                Button(model.parsing ? "正在识别…" : "AI 识别") { Task { await model.parse(api: api) } }
-                    .disabled(model.busy || model.normalizedText.isEmpty || model.characterCount > 6000
+                Button(model.parsing ? "正在识别…" : (voiceMode ? "提取事项" : "AI 识别")) { Task { await model.parse(api: api) } }
+                    .disabled(model.busy || voiceCapture.busy || model.normalizedText.isEmpty || model.characterCount > 6000
                               || (model.currentPreview && !model.entries.isEmpty))
             } header: {
-                Text("粘贴或输入文字")
+                Text(voiceMode ? "转写文字" : "粘贴或输入文字")
             } footer: {
-                Text("点击 AI 识别后，文字将经工作台服务器发送给 MiMo。结果供你编辑并确认创建。")
+                Text(voiceMode ? "提取事项时，文字会经工作台服务器发送给 MiMo。你可以编辑候选，再确认创建。"
+                     : "点击 AI 识别后，文字将经工作台服务器发送给 MiMo。结果供你编辑并确认创建。")
             } }
             if let error = model.error { InlineError(message: error) }
             if model.parsing { ProgressView() }
             if !model.currentPreview && (!model.entries.isEmpty || model.response != nil) {
                 Text("原文已改变，请重新识别后创建。").foregroundStyle(.secondary)
             }
-            if model.currentPreview {
+            if model.currentPreview && !voiceCapture.busy {
                 if let result = model.response {
                     Section {
                         if !result.reason.isEmpty { Text(result.reason) }
@@ -233,23 +351,29 @@ struct ClipboardImportView: View {
             }
             if !photoMode && model.entries.allSatisfy({ $0.created == nil }) && model.characterCount <= 6000 {
                 Section {
-                    Button("保存为普通记录") { model.useAsNote() }
-                        .disabled(model.busy || model.normalizedText.isEmpty)
+                    Button(voiceMode ? "保存为随手记" : "保存为普通记录") { model.useAsNote() }
+                        .disabled(model.busy || voiceCapture.busy || model.normalizedText.isEmpty)
                 }
             }
         }
-        .navigationTitle(photoMode ? "照片识别" : "剪贴板识别")
+        .navigationTitle(voiceMode ? "语音记录" : (photoMode ? "照片识别" : "剪贴板识别"))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() }.disabled(model.busy) }
-            if !model.text.isEmpty || model.photo != nil || !model.entries.isEmpty {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("关闭") { dismiss() }.disabled(model.busy || voiceCapture.busy)
+            }
+            if !model.text.isEmpty || model.photo != nil || !model.entries.isEmpty || voiceCapture.audio != nil {
                 ToolbarItem(placement: .primaryAction) {
-                    Button("清空") { model.clear(); selection = nil; photoError = nil }
-                        .disabled(model.busy || loadingPhoto)
+                    Button("清空") { model.clear(); selection = nil; photoError = nil; voiceCapture.clear() }
+                        .disabled(model.busy || loadingPhoto || voiceCapture.busy)
                 }
             }
         }
-        .interactiveDismissDisabled(model.busy)
+        .interactiveDismissDisabled(model.busy || voiceCapture.busy)
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background && voiceCapture.isRecording { voiceCapture.stop() }
+        }
+        .onDisappear { voiceCapture.discardRecording() }
         .confirmationDialog("创建选中的 \(model.selectedCount) 项？", isPresented: $confirming, titleVisibility: .visible) {
             Button("确认创建") { Task { await model.create(api: api, session: session) } }
         }
@@ -287,6 +411,34 @@ struct ClipboardImportView: View {
             } catch {
                 if !Task.isCancelled, self.selection == selection { photoError = "读取相册失败，请重试。" }
             }
+        }
+    }
+
+    private var voiceInput: some View {
+        Section {
+            if voiceCapture.isRecording {
+                Button("结束录音", systemImage: "stop.circle.fill") { voiceCapture.stop() }
+                Text("正在录音，最长 60 秒").font(.footnote).foregroundStyle(.secondary)
+            } else {
+                Button(voiceCapture.audio == nil ? "开始录音" : "重新录音", systemImage: "mic") {
+                    Task { if await voiceCapture.start() { model.clear() } }
+                }
+                .disabled(model.busy || voiceCapture.busy)
+                if voiceCapture.audio != nil {
+                    Button(voiceCapture.transcribing ? "正在转写…" : "转成文字", systemImage: "text.bubble") {
+                        Task {
+                            if let transcript = await voiceCapture.transcribe(api: api) {
+                                model.clear()
+                                model.text = transcript
+                            }
+                        }
+                    }
+                    .disabled(model.busy || voiceCapture.busy)
+                }
+            }
+            if let error = voiceCapture.error { InlineError(message: error) }
+        } footer: {
+            Text("点击「转成文字」后，录音会发送给 MiMo。文字可先修改，再提取事项或保存为随手记。")
         }
     }
 
